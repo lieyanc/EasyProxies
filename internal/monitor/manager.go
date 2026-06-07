@@ -20,14 +20,16 @@ import (
 
 // Config mirrors user settings needed by the monitoring server.
 type Config struct {
-	Enabled        bool
-	Listen         string
-	ProbeTarget    string
-	Password       string
-	ProxyUsername  string // 代理池的用户名（用于导出）
-	ProxyPassword  string // 代理池的密码（用于导出）
-	ExternalIP     string // 外部 IP 地址，用于导出时替换 0.0.0.0
-	SkipCertVerify bool   // 全局跳过 SSL 证书验证
+	Enabled             bool
+	Listen              string
+	ProbeTarget         string
+	HealthCheckInterval time.Duration
+	Password            string
+	ProxyUsername       string // 代理池的用户名（用于导出）
+	ProxyPassword       string // 代理池的密码（用于导出）
+	ExternalIP          string // 外部 IP 地址，用于导出时替换 0.0.0.0
+	SkipCertVerify      bool   // 全局跳过 SSL 证书验证
+	ExitIPProbeInterval time.Duration
 }
 
 // NodeInfo is static metadata about a proxy entry.
@@ -100,16 +102,18 @@ type entry struct {
 
 // Manager aggregates all node states for the UI/API.
 type Manager struct {
-	cfg        Config
-	probeDst   M.Socksaddr
-	probeReady bool
-	mu         sync.RWMutex
-	nodes      map[string]*entry
-	geoMu      sync.RWMutex
-	geoLookup  *geoip.Lookup
-	ctx        context.Context
-	cancel     context.CancelFunc
-	logger     Logger
+	cfg          Config
+	probeDst     M.Socksaddr
+	probeReady   bool
+	mu           sync.RWMutex
+	nodes        map[string]*entry
+	geoMu        sync.RWMutex
+	geoLookup    *geoip.Lookup
+	ctx          context.Context
+	cancel       context.CancelFunc
+	healthMu     sync.Mutex
+	healthCancel context.CancelFunc
+	logger       Logger
 }
 
 // Logger interface for logging
@@ -220,20 +224,31 @@ func (m *Manager) StartPeriodicHealthCheck(interval, timeout time.Duration) {
 		}
 		return
 	}
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+
+	m.healthMu.Lock()
+	if m.healthCancel != nil {
+		m.healthCancel()
+	}
+	healthCtx, cancel := context.WithCancel(m.ctx)
+	m.healthCancel = cancel
+	m.healthMu.Unlock()
 
 	go func() {
 		// 启动后立即进行一次检查
-		m.probeAllNodes(timeout)
+		m.probeAllNodesWithContext(healthCtx, timeout)
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {
 			select {
-			case <-m.ctx.Done():
+			case <-healthCtx.Done():
 				return
 			case <-ticker.C:
-				m.probeAllNodes(timeout)
+				m.probeAllNodesWithContext(healthCtx, timeout)
 			}
 		}
 	}()
@@ -250,6 +265,10 @@ func (m *Manager) ProbeAllNow(timeout time.Duration) {
 
 // probeAllNodes checks all registered nodes concurrently.
 func (m *Manager) probeAllNodes(timeout time.Duration) {
+	m.probeAllNodesWithContext(m.ctx, timeout)
+}
+
+func (m *Manager) probeAllNodesWithContext(parent context.Context, timeout time.Duration) {
 	m.mu.RLock()
 	entries := make([]*entry, 0, len(m.nodes))
 	for _, e := range m.nodes {
@@ -290,7 +309,7 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			ctx, cancel := context.WithTimeout(m.ctx, timeout)
+			ctx, cancel := context.WithTimeout(parent, timeout)
 			latency, err := probe(ctx)
 			cancel()
 
@@ -324,6 +343,12 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 
 // Stop stops the periodic health check.
 func (m *Manager) Stop() {
+	m.healthMu.Lock()
+	if m.healthCancel != nil {
+		m.healthCancel()
+		m.healthCancel = nil
+	}
+	m.healthMu.Unlock()
 	if m.cancel != nil {
 		m.cancel()
 	}
@@ -334,6 +359,25 @@ func (m *Manager) Stop() {
 	if lookup != nil {
 		_ = lookup.Close()
 	}
+}
+
+func (m *Manager) SetExitIPProbeInterval(interval time.Duration) {
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	m.mu.Lock()
+	m.cfg.ExitIPProbeInterval = interval
+	m.mu.Unlock()
+}
+
+func (m *Manager) ExitIPProbeInterval() time.Duration {
+	m.mu.RLock()
+	interval := m.cfg.ExitIPProbeInterval
+	m.mu.RUnlock()
+	if interval <= 0 {
+		return 5 * time.Minute
+	}
+	return interval
 }
 
 func parsePort(value string) uint16 {

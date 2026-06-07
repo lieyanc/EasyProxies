@@ -52,13 +52,14 @@ type LogConfig struct {
 
 // GeoIPConfig controls GeoIP-based region routing.
 type GeoIPConfig struct {
-	Enabled            bool          `yaml:"enabled"`              // 是否启用 GeoIP 地域分区
-	DatabasePath       string        `yaml:"database_path"`        // GeoLite2-Country.mmdb 文件路径
-	Listen             string        `yaml:"listen"`               // GeoIP 路由监听地址，默认使用 listener 配置
-	Port               uint16        `yaml:"port"`                 // GeoIP 路由监听端口，默认 1221
-	AutoUpdateEnabled  bool          `yaml:"auto_update_enabled"`  // 是否启用自动更新数据库
-	AutoUpdateInterval time.Duration `yaml:"auto_update_interval"` // 自动更新间隔，默认 24 小时
-	DownloadProxies    []string      `yaml:"download_proxies,omitempty"`
+	Enabled             bool          `yaml:"enabled"`                // 是否启用 GeoIP 地域分区
+	DatabasePath        string        `yaml:"database_path"`          // GeoLite2-Country.mmdb 文件路径
+	Listen              string        `yaml:"listen"`                 // GeoIP 路由监听地址，默认使用 listener 配置
+	Port                uint16        `yaml:"port"`                   // GeoIP 路由监听端口，默认 1221
+	AutoUpdateEnabled   bool          `yaml:"auto_update_enabled"`    // 是否启用自动更新数据库
+	AutoUpdateInterval  time.Duration `yaml:"auto_update_interval"`   // 自动更新间隔，默认 24 小时
+	ExitIPProbeInterval time.Duration `yaml:"exit_ip_probe_interval"` // 出口 IP 探测最小间隔，默认 5 分钟
+	DownloadProxies     []string      `yaml:"download_proxies,omitempty"`
 }
 
 // UpdateConfig controls OTA update checks and release downloads.
@@ -93,6 +94,22 @@ type PoolConfig struct {
 	RetryAttempts int `yaml:"retry_attempts,omitempty"`
 }
 
+// NormalizePoolMode returns the canonical pool scheduler mode.
+func NormalizePoolMode(mode string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "sequential", "round-robin":
+		return "sequential", true
+	case "random":
+		return "random", true
+	case "balance", "least-connections":
+		return "balance", true
+	case "latency", "best-latency":
+		return "latency", true
+	default:
+		return "", false
+	}
+}
+
 // RetryEnabledOrDefault reports whether retry is enabled (default true).
 func (p PoolConfig) RetryEnabledOrDefault() bool {
 	if p.RetryEnabled == nil {
@@ -111,10 +128,11 @@ type MultiPortConfig struct {
 
 // ManagementConfig controls the monitoring HTTP endpoint.
 type ManagementConfig struct {
-	Enabled     *bool  `yaml:"enabled"`
-	Listen      string `yaml:"listen"`
-	ProbeTarget string `yaml:"probe_target"`
-	Password    string `yaml:"password"` // WebUI 访问密码，为空则不需要密码
+	Enabled             *bool         `yaml:"enabled"`
+	Listen              string        `yaml:"listen"`
+	ProbeTarget         string        `yaml:"probe_target"`
+	HealthCheckInterval time.Duration `yaml:"health_check_interval"` // 后台健康检查间隔
+	Password            string        `yaml:"password"`              // WebUI 访问密码，为空则不需要密码
 }
 
 // SubscriptionRefreshConfig controls subscription auto-refresh and reload settings.
@@ -242,8 +260,10 @@ func (c *Config) normalize() error {
 	if c.Listener.Port == 0 {
 		c.Listener.Port = 2323
 	}
-	if c.Pool.Mode == "" {
-		c.Pool.Mode = "sequential"
+	if poolMode, ok := NormalizePoolMode(c.Pool.Mode); ok {
+		c.Pool.Mode = poolMode
+	} else {
+		return fmt.Errorf("unsupported pool.mode %q (use 'sequential', 'random', 'balance', or 'latency')", c.Pool.Mode)
 	}
 	if c.Pool.FailureThreshold <= 0 {
 		c.Pool.FailureThreshold = 3
@@ -265,6 +285,9 @@ func (c *Config) normalize() error {
 	}
 	if c.Management.ProbeTarget == "" {
 		c.Management.ProbeTarget = "www.apple.com:80"
+	}
+	if c.Management.HealthCheckInterval <= 0 {
+		c.Management.HealthCheckInterval = 5 * time.Minute
 	}
 	if c.Management.Enabled == nil {
 		defaultEnabled := true
@@ -292,6 +315,9 @@ func (c *Config) normalize() error {
 	}
 
 	c.GeoIP.DownloadProxies = cleanStringList(c.GeoIP.DownloadProxies)
+	if c.GeoIP.ExitIPProbeInterval <= 0 {
+		c.GeoIP.ExitIPProbeInterval = c.Management.HealthCheckInterval
+	}
 	c.normalizeUpdateConfig()
 
 	// Mark inline nodes with source
@@ -464,8 +490,10 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	if c.Listener.Port == 0 {
 		c.Listener.Port = 2323
 	}
-	if c.Pool.Mode == "" {
-		c.Pool.Mode = "sequential"
+	if poolMode, ok := NormalizePoolMode(c.Pool.Mode); ok {
+		c.Pool.Mode = poolMode
+	} else {
+		return fmt.Errorf("unsupported pool.mode %q (use 'sequential', 'random', 'balance', or 'latency')", c.Pool.Mode)
 	}
 	if c.Pool.FailureThreshold <= 0 {
 		c.Pool.FailureThreshold = 3
@@ -487,6 +515,9 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	}
 	if c.Management.ProbeTarget == "" {
 		c.Management.ProbeTarget = "www.apple.com:80"
+	}
+	if c.Management.HealthCheckInterval <= 0 {
+		c.Management.HealthCheckInterval = 5 * time.Minute
 	}
 	if c.Management.Enabled == nil {
 		defaultEnabled := true
@@ -511,6 +542,9 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
 	}
 	c.GeoIP.DownloadProxies = cleanStringList(c.GeoIP.DownloadProxies)
+	if c.GeoIP.ExitIPProbeInterval <= 0 {
+		c.GeoIP.ExitIPProbeInterval = c.Management.HealthCheckInterval
+	}
 	c.normalizeUpdateConfig()
 
 	if len(c.Nodes) == 0 {
@@ -546,6 +580,13 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 				c.Nodes[idx].Port = existingPort
 				usedPorts[existingPort] = true
 				log.Printf("✅ Preserved port %d for node %q", existingPort, c.Nodes[idx].Name)
+			} else if c.Nodes[idx].Port > 0 {
+				if usedPorts[c.Nodes[idx].Port] {
+					log.Printf("⚠️  Port %d for node %q is already used, reassigning", c.Nodes[idx].Port, c.Nodes[idx].Name)
+					c.Nodes[idx].Port = 0
+				} else {
+					usedPorts[c.Nodes[idx].Port] = true
+				}
 			}
 		}
 	}

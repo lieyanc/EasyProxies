@@ -27,11 +27,11 @@ import (
 var _ monitor.NodeManager = (*Manager)(nil)
 
 const (
-	defaultDrainTimeout       = 10 * time.Second
-	defaultHealthCheckTimeout = 30 * time.Second
-	healthCheckPollInterval   = 500 * time.Millisecond
-	periodicHealthInterval    = 5 * time.Minute
-	periodicHealthTimeout     = 10 * time.Second
+	defaultDrainTimeout        = 10 * time.Second
+	defaultHealthCheckTimeout  = 30 * time.Second
+	healthCheckPollInterval    = 500 * time.Millisecond
+	defaultHealthCheckInterval = 5 * time.Minute
+	periodicHealthTimeout      = 10 * time.Second
 )
 
 // Logger defines logging interface for the manager.
@@ -60,9 +60,10 @@ type Manager struct {
 	cfg           *config.Config
 	monitorCfg    monitor.Config
 
-	drainTimeout      time.Duration
-	minAvailableNodes int
-	logger            Logger
+	drainTimeout        time.Duration
+	healthCheckInterval time.Duration
+	minAvailableNodes   int
+	logger              Logger
 
 	baseCtx            context.Context
 	healthCheckStarted bool
@@ -143,7 +144,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	// Start periodic health check after nodes are registered
 	m.mu.Lock()
 	if m.monitorMgr != nil && !m.healthCheckStarted {
-		m.monitorMgr.StartPeriodicHealthCheck(periodicHealthInterval, periodicHealthTimeout)
+		m.monitorMgr.StartPeriodicHealthCheck(m.healthCheckInterval, periodicHealthTimeout)
 		m.healthCheckStarted = true
 	}
 	m.mu.Unlock()
@@ -264,7 +265,7 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 
 	// Trigger initial health check for newly registered nodes
 	if m.monitorMgr != nil {
-		go m.monitorMgr.ProbeAllNow(periodicHealthTimeout)
+		m.monitorMgr.StartPeriodicHealthCheck(m.healthCheckInterval, periodicHealthTimeout)
 	}
 
 	m.logger.Infof("reload completed successfully with %d nodes", len(newCfg.Nodes))
@@ -656,6 +657,11 @@ func (m *Manager) applyConfigSettings(cfg *config.Config) {
 	} else if m.drainTimeout == 0 {
 		m.drainTimeout = defaultDrainTimeout
 	}
+	if cfg.Management.HealthCheckInterval > 0 {
+		m.healthCheckInterval = cfg.Management.HealthCheckInterval
+	} else if m.healthCheckInterval == 0 {
+		m.healthCheckInterval = defaultHealthCheckInterval
+	}
 	m.minAvailableNodes = cfg.SubscriptionRefresh.MinAvailableNodes
 }
 
@@ -669,6 +675,7 @@ func (m *Manager) configureMonitorGeoIP(cfg *config.Config) {
 	if monitorMgr == nil {
 		return
 	}
+	monitorMgr.SetExitIPProbeInterval(cfg.GeoIP.ExitIPProbeInterval)
 	if cfg.GeoIP.Enabled && cfg.GeoIP.DatabasePath == "" {
 		m.logger.Warnf("GeoIP enabled but database_path is empty (egress region detection disabled)")
 		_ = monitorMgr.ConfigureGeoIP(false, "", false, 0, nil)
@@ -868,11 +875,10 @@ func (m *Manager) ReloadWithPortMap(newCfg *config.Config, portMap map[string]ui
 		return errors.New("new config is nil")
 	}
 
-	// Apply port mapping to preserve existing node ports
-	if portMap != nil && len(portMap) > 0 {
-		if err := newCfg.NormalizeWithPortMap(portMap); err != nil {
-			return fmt.Errorf("normalize config with port map: %w", err)
-		}
+	// Normalize every reload through the port-map path. Existing node URIs keep
+	// their ports; new nodes fill gaps from the configured base port.
+	if err := newCfg.NormalizeWithPortMap(portMap); err != nil {
+		return fmt.Errorf("normalize config with port map: %w", err)
 	}
 
 	return m.Reload(newCfg)

@@ -15,6 +15,7 @@ type sharedMemberState struct {
 	failures         int
 	blacklisted      bool
 	blacklistedUntil time.Time
+	lastExitIPProbe  time.Time
 	entry            atomic.Pointer[monitor.EntryHandle]
 	active           atomic.Int32
 }
@@ -143,6 +144,19 @@ func (s *sharedMemberState) decActive() {
 
 func (s *sharedMemberState) activeCount() int32 {
 	return s.active.Load()
+}
+
+func (s *sharedMemberState) shouldProbeExitIP(now time.Time, interval time.Duration) bool {
+	if interval <= 0 {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.lastExitIPProbe.IsZero() && now.Sub(s.lastExitIPProbe) < interval {
+		return false
+	}
+	s.lastExitIPProbe = now
+	return true
 }
 
 // releaseSharedMember clears blacklist state for a tag (called from release functions).

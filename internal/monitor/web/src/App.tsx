@@ -123,6 +123,13 @@ const REGION_OPTIONS = [
   { value: "other", label: "OTHER" }
 ];
 
+const POOL_MODE_OPTIONS = [
+  { value: "sequential", label: "sequential" },
+  { value: "random", label: "random" },
+  { value: "balance", label: "balance" },
+  { value: "latency", label: "latency" }
+];
+
 const EMPTY_PROBE_PROGRESS: ProbeProgress = {
   visible: false,
   total: 0,
@@ -150,7 +157,7 @@ const DEFAULT_CORE_FORM: CoreSettingsForm = {
     password: ""
   },
   pool: {
-    mode: "random",
+    mode: "sequential",
     failure_threshold: "3",
     blacklist_duration: "24h"
   },
@@ -188,6 +195,12 @@ const DEFAULT_UPDATE_FORM: Required<UpdateConfig> = {
   proxy_base_url: "https://dl.repo.chycloud.top",
   repo: "lieyanc/easy-proxies"
 };
+
+function assertNoPayloadError(payload: { error?: string }) {
+  if (payload.error) {
+    throw new Error(payload.error);
+  }
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
@@ -429,6 +442,7 @@ function App() {
         `/api/nodes/${encodeURIComponent(tag)}/probe`,
         { method: "POST" }
       );
+      assertNoPayloadError(payload);
       toast.success(`Latency: ${payload.latency_ms ?? 0}ms`);
       await refreshNodes(true);
     } catch (error) {
@@ -438,10 +452,14 @@ function App() {
 
   async function releaseNode(tag: string) {
     try {
-      await apiJson<{ message: string }>(`/api/nodes/${encodeURIComponent(tag)}/release`, {
-        method: "POST"
-      });
-      toast.success("已解封");
+      const payload = await apiJson<{ message?: string; error?: string }>(
+        `/api/nodes/${encodeURIComponent(tag)}/release`,
+        {
+          method: "POST"
+        }
+      );
+      assertNoPayloadError(payload);
+      toast.success(payload.message || "已解封");
       await refreshNodes(true);
     } catch (error) {
       handleApiError(error, "解封失败");
@@ -451,10 +469,11 @@ function App() {
   async function blacklistNode(tag: string) {
     if (!window.confirm("确定拉黑该节点 24 小时？")) return;
     try {
-      const payload = await apiJson<{ message: string }>(
+      const payload = await apiJson<{ message?: string; error?: string }>(
         `/api/nodes/${encodeURIComponent(tag)}/blacklist`,
         jsonRequest("POST", { duration: "24h" })
       );
+      assertNoPayloadError(payload);
       toast.success(payload.message || "已拉黑");
       await refreshNodes(true);
     } catch (error) {
@@ -838,10 +857,10 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-muted/30 text-foreground">
-      <div className="flex min-h-screen">
+    <div className="h-screen overflow-hidden bg-muted/30 text-foreground">
+      <div className="flex h-full min-h-0">
         <Sidebar activeTab={activeTab} onChange={setActiveTab} stars={githubStars} />
-        <main className="flex min-w-0 flex-1 flex-col">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <Header
             activeTab={activeTab}
             onTabChange={setActiveTab}
@@ -858,7 +877,7 @@ function App() {
             isProbing={isProbing}
           />
           {probeProgress.visible ? <ProbeProgressBar progress={probeProgress} /> : null}
-          <div className="scrollbar-thin flex-1 overflow-auto p-4 md:p-6">
+          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6">
             {activeTab === "dashboard" ? (
               <DashboardView
                 nodesData={nodesData}
@@ -952,7 +971,7 @@ function Sidebar({
   stars: string;
 }) {
   return (
-    <aside className="hidden w-64 shrink-0 border-r bg-background md:flex md:flex-col">
+    <aside className="hidden h-full w-64 shrink-0 border-r bg-background md:flex md:flex-col">
       <div className="flex h-14 items-center gap-3 border-b px-5">
         <div className="flex h-8 w-8 items-center justify-center rounded-md border bg-muted">
           <Globe2 className="h-4 w-4" />
@@ -962,7 +981,7 @@ function Sidebar({
           <div className="text-xs text-muted-foreground">Monitor</div>
         </div>
       </div>
-      <nav className="flex-1 space-y-1 p-3">
+      <nav className="min-h-0 flex-1 space-y-1 p-3">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           return (
@@ -1022,7 +1041,7 @@ function Header({
   const ThemeIcon = themeMode === "dark" ? Moon : themeMode === "light" ? Sun : Circle;
 
   return (
-    <header className="flex min-h-14 flex-col gap-3 border-b bg-background px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+    <header className="flex min-h-14 shrink-0 flex-col gap-3 border-b bg-background px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-6">
       <div className="flex min-w-0 items-center gap-3">
         <div className="md:hidden">
           <Select value={activeTab} onValueChange={(value) => onTabChange(value as TabId)}>
@@ -1075,7 +1094,7 @@ function Header({
 
 function ProbeProgressBar({ progress }: { progress: ProbeProgress }) {
   return (
-    <div className="border-b bg-background px-4 py-3 lg:px-6">
+    <div className="shrink-0 border-b bg-background px-4 py-3 lg:px-6">
       <div className="flex flex-col gap-2 md:flex-row md:items-center">
         <Progress value={progress.percent} className="h-2 md:flex-1" />
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -1885,10 +1904,11 @@ function SettingsView({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="random">random</SelectItem>
-                  <SelectItem value="round-robin">round-robin</SelectItem>
-                  <SelectItem value="least-connections">least-connections</SelectItem>
-                  <SelectItem value="best-latency">best-latency</SelectItem>
+                  {POOL_MODE_OPTIONS.map((mode) => (
+                    <SelectItem key={mode.value} value={mode.value}>
+                      {mode.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </Field>
@@ -2466,7 +2486,7 @@ function normalizeCoreForm(
       password: settings.multi_port?.password || ""
     },
     pool: {
-      mode: settings.pool?.mode || "random",
+      mode: normalizePoolMode(settings.pool?.mode),
       failure_threshold: String(settings.pool?.failure_threshold || 3),
       blacklist_duration: settings.pool?.blacklist_duration || "24h"
     },
@@ -2517,7 +2537,7 @@ function buildCorePayload(form: CoreSettingsForm) {
       password: form.multi_port.password
     },
     pool: {
-      mode: form.pool.mode,
+      mode: normalizePoolMode(form.pool.mode),
       failure_threshold: Number(form.pool.failure_threshold) || 3,
       blacklist_duration: form.pool.blacklist_duration || "24h"
     },
@@ -2559,6 +2579,20 @@ function coreFormSnapshot(form: CoreSettingsForm) {
 
 function subscriptionSnapshot(form: CoreSettingsForm) {
   return JSON.stringify(buildSubscriptionPayload(form));
+}
+
+function normalizePoolMode(mode?: string) {
+  switch ((mode || "").trim().toLowerCase()) {
+    case "random":
+      return "random";
+    case "balance":
+      return "balance";
+    case "latency":
+      return "latency";
+    case "sequential":
+    default:
+      return "sequential";
+  }
 }
 
 function normalizeUpdateForm(update: UpdateConfig): Required<UpdateConfig> {

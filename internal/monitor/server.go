@@ -193,7 +193,9 @@ func (s *Server) SetConfig(cfg *config.Config) {
 	if cfg != nil {
 		s.cfg.ExternalIP = cfg.ExternalIP
 		s.cfg.ProbeTarget = cfg.Management.ProbeTarget
+		s.cfg.HealthCheckInterval = cfg.Management.HealthCheckInterval
 		s.cfg.SkipCertVerify = cfg.SkipCertVerify
+		s.cfg.ExitIPProbeInterval = cfg.GeoIP.ExitIPProbeInterval
 		// Sync proxy credentials based on mode
 		if cfg.Mode == "multi-port" || cfg.Mode == "hybrid" {
 			s.cfg.ProxyUsername = cfg.MultiPort.Username
@@ -270,8 +272,6 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	// 只返回初始检查通过的可用节点
-	filtered := s.mgr.SnapshotFiltered(true)
 	allNodes := s.mgr.Snapshot()
 	totalNodes := len(allNodes)
 
@@ -291,7 +291,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload := map[string]any{
-		"nodes":          filtered,
+		"nodes":          allNodes,
 		"total_nodes":    totalNodes,
 		"region_stats":   regionStats,
 		"region_healthy": regionHealthy,
@@ -366,7 +366,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		latency, err := s.mgr.Probe(ctx, tag)
 		if err != nil {
-			writeJSON(w, map[string]any{"error": err.Error()})
+			writeJSONError(w, http.StatusBadGateway, err.Error())
 			return
 		}
 		latencyMs := latency.Milliseconds()
@@ -380,7 +380,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.mgr.Release(tag); err != nil {
-			writeJSON(w, map[string]any{"error": err.Error()})
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, map[string]any{"message": "已解除拉黑"})
@@ -400,7 +400,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 			duration = 24 * time.Hour
 		}
 		if err := s.mgr.ManualBlacklist(tag, duration); err != nil {
-			writeJSON(w, map[string]any{"error": err.Error()})
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, map[string]any{"message": fmt.Sprintf("已拉黑 %s", duration)})
@@ -545,6 +545,12 @@ func (s *Server) handleProbeAll(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": message})
 }
 
 // withAuth 认证中间件，如果配置了密码则需要验证
@@ -819,13 +825,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"compress":    logCfg.Compress,
 			},
 			"geoip": map[string]any{
-				"enabled":              false,
-				"database_path":        "",
-				"listen":               "",
-				"port":                 0,
-				"auto_update_enabled":  false,
-				"auto_update_interval": "",
-				"download_proxies":     []string{},
+				"enabled":                false,
+				"database_path":          "",
+				"listen":                 "",
+				"port":                   0,
+				"auto_update_enabled":    false,
+				"auto_update_interval":   "",
+				"exit_ip_probe_interval": "",
+				"download_proxies":       []string{},
 			},
 			"update": map[string]any{
 				"enabled":        false,
@@ -849,23 +856,29 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"username":  cfg.MultiPort.Username,
 				"password":  cfg.MultiPort.Password,
 			}
+			poolMode, ok := config.NormalizePoolMode(cfg.Pool.Mode)
+			if !ok {
+				poolMode = "sequential"
+			}
 			resp["pool"] = map[string]any{
-				"mode":               cfg.Pool.Mode,
+				"mode":               poolMode,
 				"failure_threshold":  cfg.Pool.FailureThreshold,
 				"blacklist_duration": cfg.Pool.BlacklistDuration.String(),
 			}
 			resp["management"] = map[string]any{
-				"listen":   cfg.Management.Listen,
-				"password": cfg.Management.Password,
+				"listen":                cfg.Management.Listen,
+				"password":              cfg.Management.Password,
+				"health_check_interval": cfg.Management.HealthCheckInterval.String(),
 			}
 			resp["geoip"] = map[string]any{
-				"enabled":              cfg.GeoIP.Enabled,
-				"database_path":        cfg.GeoIP.DatabasePath,
-				"listen":               cfg.GeoIP.Listen,
-				"port":                 cfg.GeoIP.Port,
-				"auto_update_enabled":  cfg.GeoIP.AutoUpdateEnabled,
-				"auto_update_interval": cfg.GeoIP.AutoUpdateInterval.String(),
-				"download_proxies":     cfg.GeoIP.DownloadProxies,
+				"enabled":                cfg.GeoIP.Enabled,
+				"database_path":          cfg.GeoIP.DatabasePath,
+				"listen":                 cfg.GeoIP.Listen,
+				"port":                   cfg.GeoIP.Port,
+				"auto_update_enabled":    cfg.GeoIP.AutoUpdateEnabled,
+				"auto_update_interval":   cfg.GeoIP.AutoUpdateInterval.String(),
+				"exit_ip_probe_interval": cfg.GeoIP.ExitIPProbeInterval.String(),
+				"download_proxies":       cfg.GeoIP.DownloadProxies,
 			}
 			resp["update"] = map[string]any{
 				"enabled":        cfg.Update.Enabled,
@@ -900,8 +913,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				BlacklistDuration string `json:"blacklist_duration"`
 			} `json:"pool,omitempty"`
 			Management *struct {
-				Listen   string `json:"listen"`
-				Password string `json:"password"`
+				Listen              string `json:"listen"`
+				Password            string `json:"password"`
+				HealthCheckInterval string `json:"health_check_interval"`
 			} `json:"management,omitempty"`
 			Log *struct {
 				Output     string `json:"output"`
@@ -911,13 +925,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				Compress   bool   `json:"compress"`
 			} `json:"log"`
 			GeoIP *struct {
-				Enabled            bool     `json:"enabled"`
-				DatabasePath       string   `json:"database_path"`
-				Listen             string   `json:"listen"`
-				Port               uint16   `json:"port"`
-				AutoUpdateEnabled  bool     `json:"auto_update_enabled"`
-				AutoUpdateInterval string   `json:"auto_update_interval"`
-				DownloadProxies    []string `json:"download_proxies"`
+				Enabled             bool     `json:"enabled"`
+				DatabasePath        string   `json:"database_path"`
+				Listen              string   `json:"listen"`
+				Port                uint16   `json:"port"`
+				AutoUpdateEnabled   bool     `json:"auto_update_enabled"`
+				AutoUpdateInterval  string   `json:"auto_update_interval"`
+				ExitIPProbeInterval string   `json:"exit_ip_probe_interval"`
+				DownloadProxies     []string `json:"download_proxies"`
 			} `json:"geoip"`
 			Update *struct {
 				Enabled       bool   `json:"enabled"`
@@ -976,7 +991,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			nextCfg.MultiPort.Password = req.MultiPort.Password
 		}
 		if req.Pool != nil {
-			nextCfg.Pool.Mode = req.Pool.Mode
+			poolMode, ok := config.NormalizePoolMode(req.Pool.Mode)
+			if !ok {
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "不支持的调度模式"})
+				return
+			}
+			nextCfg.Pool.Mode = poolMode
 			nextCfg.Pool.FailureThreshold = req.Pool.FailureThreshold
 			if req.Pool.BlacklistDuration != "" {
 				if d, err := time.ParseDuration(req.Pool.BlacklistDuration); err == nil {
@@ -987,6 +1009,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if req.Management != nil {
 			nextCfg.Management.Listen = req.Management.Listen
 			nextCfg.Management.Password = req.Management.Password
+			if req.Management.HealthCheckInterval != "" {
+				if d, err := time.ParseDuration(req.Management.HealthCheckInterval); err == nil && d > 0 {
+					nextCfg.Management.HealthCheckInterval = d
+				}
+			}
 		}
 		if logCfg != nil {
 			nextCfg.Log.Output = logCfg.Output
@@ -1011,6 +1038,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			if req.GeoIP.AutoUpdateInterval != "" {
 				if d, err := time.ParseDuration(req.GeoIP.AutoUpdateInterval); err == nil {
 					nextCfg.GeoIP.AutoUpdateInterval = d
+				}
+			}
+			if req.GeoIP.ExitIPProbeInterval != "" {
+				if d, err := time.ParseDuration(req.GeoIP.ExitIPProbeInterval); err == nil && d > 0 {
+					nextCfg.GeoIP.ExitIPProbeInterval = d
 				}
 			}
 			if nextCfg.GeoIP.Enabled && nextCfg.GeoIP.DatabasePath == "" {
@@ -1062,6 +1094,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		s.cfg.SkipCertVerify = nextCfg.SkipCertVerify
 		s.cfg.Password = nextCfg.Management.Password
 		s.cfg.Listen = nextCfg.Management.Listen
+		s.cfg.HealthCheckInterval = nextCfg.Management.HealthCheckInterval
+		s.cfg.ExitIPProbeInterval = nextCfg.GeoIP.ExitIPProbeInterval
+		if s.mgr != nil {
+			s.mgr.SetExitIPProbeInterval(nextCfg.GeoIP.ExitIPProbeInterval)
+		}
 		if nextCfg.Mode == "multi-port" || nextCfg.Mode == "hybrid" {
 			s.cfg.ProxyUsername = nextCfg.MultiPort.Username
 			s.cfg.ProxyPassword = nextCfg.MultiPort.Password

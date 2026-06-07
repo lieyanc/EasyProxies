@@ -786,6 +786,9 @@ func (p *poolOutbound) updateExitIP(ctx context.Context, member *memberState) {
 	if p.monitor == nil || !p.monitor.GeoIPReady() {
 		return
 	}
+	if member.shared != nil && !member.shared.shouldProbeExitIP(time.Now(), p.monitor.ExitIPProbeInterval()) {
+		return
+	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

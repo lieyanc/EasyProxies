@@ -88,6 +88,7 @@ func New(cfg *config.Config, boxMgr *boxmgr.Manager, opts ...Option) *Manager {
 		manualRefresh: make(chan struct{}, 1),
 		httpClient:    httpClient,
 	}
+	m.initLastSubscriptionSnapshot()
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -350,6 +351,19 @@ func (m *Manager) doRefresh() {
 
 	m.logger.Infof("fetched %d nodes from subscriptions", len(nodes))
 
+	newHash := m.computeNodesHash(nodes)
+	if m.subscriptionNodesUnchanged(newHash) {
+		nodesModified := m.CheckNodesModified()
+		m.mu.Lock()
+		m.status.LastRefresh = time.Now()
+		m.status.NodeCount = len(nodes)
+		m.status.LastError = ""
+		m.status.NodesModified = nodesModified
+		m.mu.Unlock()
+		m.logger.Infof("subscription nodes unchanged, skipping reload")
+		return
+	}
+
 	// Write subscription nodes to nodes.txt
 	nodesFilePath := m.getNodesFilePath()
 	if err := m.writeNodesToFile(nodesFilePath, nodes); err != nil {
@@ -363,7 +377,6 @@ func (m *Manager) doRefresh() {
 	m.logger.Infof("written %d nodes to %s", len(nodes), nodesFilePath)
 
 	// Update hash and mod time after writing
-	newHash := m.computeNodesHash(nodes)
 	m.mu.Lock()
 	m.lastSubHash = newHash
 	if info, err := os.Stat(nodesFilePath); err == nil {
@@ -409,7 +422,7 @@ func (m *Manager) getNodesFilePath() string {
 
 // writeNodesToFile writes nodes to a file (one URI per line).
 func (m *Manager) writeNodesToFile(path string, nodes []config.NodeConfig) error {
-	var lines []string
+	lines := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		lines = append(lines, node.URI)
 	}
@@ -418,6 +431,63 @@ func (m *Manager) writeNodesToFile(path string, nodes []config.NodeConfig) error
 		content += "\n"
 	}
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func (m *Manager) initLastSubscriptionSnapshot() {
+	if m.baseCfg == nil || len(m.baseCfg.Subscriptions) == 0 {
+		return
+	}
+
+	if nodes, modTime, ok := readNodesFileSnapshot(m.getNodesFilePath()); ok && len(nodes) > 0 {
+		m.lastSubHash = m.computeNodesHash(nodes)
+		m.lastNodesModTime = modTime
+		return
+	}
+
+	nodes := make([]config.NodeConfig, 0, len(m.baseCfg.Nodes))
+	for _, node := range m.baseCfg.Nodes {
+		if node.Source == config.NodeSourceSubscription {
+			nodes = append(nodes, node)
+		}
+	}
+	if len(nodes) == 0 {
+		return
+	}
+	m.lastSubHash = m.computeNodesHash(nodes)
+}
+
+func (m *Manager) subscriptionNodesUnchanged(newHash string) bool {
+	m.mu.RLock()
+	lastHash := m.lastSubHash
+	m.mu.RUnlock()
+	return lastHash != "" && newHash == lastHash
+}
+
+func readNodesFileSnapshot(path string) ([]config.NodeConfig, time.Time, bool) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, time.Time{}, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, time.Time{}, false
+	}
+	return parseNodeURIs(data), info.ModTime(), true
+}
+
+func parseNodeURIs(data []byte) []config.NodeConfig {
+	var nodes []config.NodeConfig
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if config.IsProxyURI(line) {
+			nodes = append(nodes, config.NodeConfig{URI: line})
+		}
+	}
+	return nodes
 }
 
 // computeNodesHash computes a hash of node URIs for change detection.
@@ -461,20 +531,7 @@ func (m *Manager) CheckNodesModified() bool {
 		return false // File doesn't exist or can't read
 	}
 
-	// Parse nodes from file content
-	var nodes []config.NodeConfig
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if config.IsProxyURI(line) {
-			nodes = append(nodes, config.NodeConfig{URI: line})
-		}
-	}
-
-	currentHash := m.computeNodesHash(nodes)
+	currentHash := m.computeNodesHash(parseNodeURIs(data))
 	changed := currentHash != lastHash
 
 	// Update cached mod time
@@ -560,20 +617,6 @@ func (m *Manager) fetchSubscription(subURL string, timeout time.Duration) ([]con
 func (m *Manager) createNewConfig(nodes []config.NodeConfig) *config.Config {
 	// Deep copy base config
 	newCfg := *m.baseCfg
-
-	// Assign port numbers to nodes in multi-port mode
-	if newCfg.Mode == "multi-port" {
-		portCursor := newCfg.MultiPort.BasePort
-		for i := range nodes {
-			nodes[i].Port = portCursor
-			portCursor++
-			// Apply default credentials
-			if nodes[i].Username == "" {
-				nodes[i].Username = newCfg.MultiPort.Username
-				nodes[i].Password = newCfg.MultiPort.Password
-			}
-		}
-	}
 
 	// Process node names
 	for i := range nodes {

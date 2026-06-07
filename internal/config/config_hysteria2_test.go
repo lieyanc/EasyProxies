@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestParseClashYAML_Hysteria2PortHoppingAndObfs(t *testing.T) {
@@ -123,5 +124,96 @@ func TestValidateManagementSecurityRejectsPublicNoPassword(t *testing.T) {
 	cfg.Management.Listen = "127.0.0.1:9091"
 	if err := cfg.ValidateManagementSecurity(); err != nil {
 		t.Fatalf("expected loopback unauthenticated management listener to be allowed: %v", err)
+	}
+}
+
+func TestNormalizePoolMode(t *testing.T) {
+	tests := map[string]string{
+		"":                  "sequential",
+		"sequential":        "sequential",
+		"random":            "random",
+		"balance":           "balance",
+		"latency":           "latency",
+		"round-robin":       "sequential",
+		"least-connections": "balance",
+		"best-latency":      "latency",
+	}
+
+	for input, want := range tests {
+		got, ok := NormalizePoolMode(input)
+		if !ok {
+			t.Fatalf("expected mode %q to normalize", input)
+		}
+		if got != want {
+			t.Fatalf("NormalizePoolMode(%q) = %q, want %q", input, got, want)
+		}
+	}
+
+	if _, ok := NormalizePoolMode("fastest"); ok {
+		t.Fatal("expected unknown pool mode to be rejected")
+	}
+}
+
+func TestNormalizeWithPortMapPreservesPortsAndAssignsUniqueNewPorts(t *testing.T) {
+	oldAURI := "vless://00000000-0000-0000-0000-000000000001@example-a.com:443?security=tls#old-a"
+	oldBURI := "vless://00000000-0000-0000-0000-000000000002@example-b.com:443?security=tls#old-b"
+	newURI := "vless://00000000-0000-0000-0000-000000000003@example-c.com:443?security=tls#new-c"
+
+	cfg := Config{
+		Mode: "multi-port",
+		MultiPort: MultiPortConfig{
+			Address:  "127.0.0.1",
+			BasePort: 42000,
+		},
+		Nodes: []NodeConfig{
+			{Name: "new-c", URI: newURI},
+			{Name: "old-a", URI: oldAURI},
+			{Name: "old-b", URI: oldBURI},
+		},
+	}
+
+	err := cfg.NormalizeWithPortMap(map[string]uint16{
+		oldAURI: 42002,
+		oldBURI: 42000,
+	})
+	if err != nil {
+		t.Fatalf("normalize with port map: %v", err)
+	}
+
+	ports := map[uint16]string{}
+	for _, node := range cfg.Nodes {
+		if node.Port == 0 {
+			t.Fatalf("node %q was not assigned a port", node.Name)
+		}
+		if other, ok := ports[node.Port]; ok {
+			t.Fatalf("nodes %q and %q share port %d", other, node.Name, node.Port)
+		}
+		ports[node.Port] = node.Name
+	}
+	if cfg.Nodes[1].Port != 42002 {
+		t.Fatalf("expected old-a to keep port 42002, got %d", cfg.Nodes[1].Port)
+	}
+	if cfg.Nodes[2].Port != 42000 {
+		t.Fatalf("expected old-b to keep port 42000, got %d", cfg.Nodes[2].Port)
+	}
+}
+
+func TestNormalizeDefaultsProbeIntervals(t *testing.T) {
+	cfg := Config{
+		Mode: "pool",
+		Nodes: []NodeConfig{{
+			Name: "node-a",
+			URI:  "vless://00000000-0000-0000-0000-000000000000@example.com:443?security=tls#node-a",
+		}},
+	}
+
+	if err := cfg.NormalizeWithPortMap(nil); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if cfg.Management.HealthCheckInterval != 5*time.Minute {
+		t.Fatalf("expected default health check interval 5m, got %s", cfg.Management.HealthCheckInterval)
+	}
+	if cfg.GeoIP.ExitIPProbeInterval != 5*time.Minute {
+		t.Fatalf("expected default exit IP probe interval 5m, got %s", cfg.GeoIP.ExitIPProbeInterval)
 	}
 }
