@@ -57,6 +57,7 @@ type GeoIPConfig struct {
 	Port               uint16        `yaml:"port"`                 // GeoIP 路由监听端口，默认 1221
 	AutoUpdateEnabled  bool          `yaml:"auto_update_enabled"`  // 是否启用自动更新数据库
 	AutoUpdateInterval time.Duration `yaml:"auto_update_interval"` // 自动更新间隔，默认 24 小时
+	DownloadProxies    []string      `yaml:"download_proxies,omitempty"`
 }
 
 // ListenerConfig defines how the HTTP/SOCKS5 mixed proxy should listen for clients.
@@ -280,6 +281,8 @@ func (c *Config) normalize() error {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
 	}
 
+	c.GeoIP.DownloadProxies = cleanStringList(c.GeoIP.DownloadProxies)
+
 	// Mark inline nodes with source
 	for idx := range c.Nodes {
 		c.Nodes[idx].Source = NodeSourceInline
@@ -496,6 +499,7 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	if c.SubscriptionRefresh.MinAvailableNodes <= 0 {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
 	}
+	c.GeoIP.DownloadProxies = cleanStringList(c.GeoIP.DownloadProxies)
 
 	if len(c.Nodes) == 0 {
 		return errors.New("config.nodes cannot be empty")
@@ -570,6 +574,20 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	c.normalizeLogConfig()
 
 	return nil
+}
+
+func cleanStringList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			cleaned = append(cleaned, value)
+		}
+	}
+	return cleaned
 }
 
 // normalizeLogConfig applies defaults to the log config.

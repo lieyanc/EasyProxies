@@ -732,6 +732,7 @@
                   <div class="form-group"><label>路由监听地址</label><input type="text" id="settingGeoIPListen" class="setting-input" /></div>
                   <div class="form-group"><label>路由端口</label><input type="number" id="settingGeoIPPort" class="setting-input" min="1" max="65535" placeholder="1221" /></div>
                   <div class="form-group"><label>更新间隔</label><input type="text" id="settingGeoIPUpdateInterval" class="setting-input" placeholder="24h" /></div>
+                  <div class="form-group" style="grid-column: 1 / -1;"><label>下载代理</label><textarea id="settingGeoIPDownloadProxies" rows="3" class="setting-input" placeholder="http://127.0.0.1:7890&#10;socks5://127.0.0.1:7891" style="resize:vertical; font-size:12px;"></textarea></div>
                 </div>
                 <div style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">首次启用会自动下载 GeoIP 数据库（约 9MB），需重载核心生效</div>
               </div>
@@ -1476,6 +1477,7 @@
         document.getElementById('settingGeoIPPort').value = geo.port || '';
         document.getElementById('settingGeoIPAutoUpdate').checked = geo.auto_update_enabled || false;
         document.getElementById('settingGeoIPUpdateInterval').value = geo.auto_update_interval || '24h0m0s';
+        document.getElementById('settingGeoIPDownloadProxies').value = (geo.download_proxies || []).join('\n');
         // Log
         const logCfg = d.log || {};
         document.getElementById('settingLogOutput').value = logCfg.output || 'stdout';
@@ -1525,6 +1527,7 @@
         geoip_port: document.getElementById('settingGeoIPPort').value,
         geoip_auto: document.getElementById('settingGeoIPAutoUpdate').checked,
         geoip_interval: document.getElementById('settingGeoIPUpdateInterval').value,
+        geoip_download_proxies: document.getElementById('settingGeoIPDownloadProxies').value,
         log_output: document.getElementById('settingLogOutput').value,
         log_max_size: document.getElementById('settingLogMaxSize').value,
         log_max_backups: document.getElementById('settingLogMaxBackups').value,
@@ -1599,6 +1602,7 @@
             port: parseInt(document.getElementById('settingGeoIPPort').value) || 0,
             auto_update_enabled: document.getElementById('settingGeoIPAutoUpdate').checked,
             auto_update_interval: document.getElementById('settingGeoIPUpdateInterval').value || '24h',
+            download_proxies: document.getElementById('settingGeoIPDownloadProxies').value.split('\n').map(s => s.trim()).filter(s => s),
           }
         };
         try {

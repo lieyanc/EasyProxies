@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/oschwald/geoip2-golang"
+	netproxy "golang.org/x/net/proxy"
 )
 
 // Region codes
@@ -36,6 +37,13 @@ const (
 	DefaultGeoIPURL = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb"
 )
 
+var geoIPDownloadURL = DefaultGeoIPURL
+
+// DownloadOptions controls how the GeoIP database is fetched.
+type DownloadOptions struct {
+	Proxies []string
+}
+
 // RegionInfo contains region details
 type RegionInfo struct {
 	Code    string // "jp", "kr", "us", "hk", "tw", "other"
@@ -53,10 +61,16 @@ type Lookup struct {
 	updateOnce     sync.Once
 	dnsCache       map[string]RegionInfo
 	cacheMu        sync.RWMutex
+	downloadOpts   DownloadOptions
 }
 
 // EnsureDatabase checks if the GeoIP database exists, and downloads it if not
 func EnsureDatabase(dbPath string) error {
+	return EnsureDatabaseWithOptions(dbPath, DownloadOptions{})
+}
+
+// EnsureDatabaseWithOptions checks if the GeoIP database exists, and downloads it if not.
+func EnsureDatabaseWithOptions(dbPath string, opts DownloadOptions) error {
 	if dbPath == "" {
 		return nil
 	}
@@ -75,83 +89,7 @@ func EnsureDatabase(dbPath string) error {
 	}
 
 	log.Printf("📥 GeoIP database not found at %s, downloading...", dbPath)
-
-	// Create parent directory if needed
-	dir := filepath.Dir(dbPath)
-	if dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("create directory: %w", err)
-		}
-	}
-
-	// Download with timeout
-	client := &http.Client{Timeout: 60 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, DefaultGeoIPURL, nil)
-	if err != nil {
-		return fmt.Errorf("create download request: %w", err)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed: unexpected status %s", resp.Status)
-	}
-
-	// Download to temporary file
-	tempFile, err := os.CreateTemp(dir, ".geoip-*.mmdb")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tempPath := tempFile.Name()
-	cleanup := true
-	defer func() {
-		if tempFile != nil {
-			tempFile.Close()
-		}
-		if cleanup {
-			os.Remove(tempPath)
-		}
-	}()
-
-	// Copy with progress tracking
-	progress := &progressWriter{total: resp.ContentLength}
-	reader := io.TeeReader(resp.Body, progress)
-	written, err := io.Copy(tempFile, reader)
-	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
-	}
-
-	// Verify download completeness
-	if resp.ContentLength > 0 && written < resp.ContentLength {
-		return fmt.Errorf("incomplete download (%d/%d bytes)", written, resp.ContentLength)
-	}
-
-	// Sync and close temp file
-	if err := tempFile.Sync(); err != nil {
-		return fmt.Errorf("sync temp file: %w", err)
-	}
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	tempFile = nil
-
-	// Validate MMDB format
-	if err := validateMMDB(tempPath); err != nil {
-		return fmt.Errorf("validation failed: %w", err)
-	}
-
-	// Atomic rename
-	if err := os.Rename(tempPath, dbPath); err != nil {
-		return fmt.Errorf("rename failed: %w", err)
-	}
-	cleanup = false
-
-	log.Printf("✅ GeoIP database downloaded successfully to %s", dbPath)
-	return nil
+	return downloadDatabaseWithOptions(dbPath, opts)
 }
 
 // progressWriter tracks download progress
@@ -220,17 +158,24 @@ func validateMMDB(path string) error {
 
 // New creates a new GeoIP lookup instance
 func New(dbPath string) (*Lookup, error) {
-	return NewWithAutoUpdate(dbPath, 0)
+	return NewWithOptions(dbPath, 0, DownloadOptions{})
 }
 
 // NewWithAutoUpdate creates a new GeoIP lookup instance with auto-update support
 func NewWithAutoUpdate(dbPath string, updateInterval time.Duration) (*Lookup, error) {
+	return NewWithOptions(dbPath, updateInterval, DownloadOptions{})
+}
+
+// NewWithOptions creates a new GeoIP lookup instance with auto-update and download options.
+func NewWithOptions(dbPath string, updateInterval time.Duration, downloadOpts DownloadOptions) (*Lookup, error) {
 	if dbPath == "" {
 		return &Lookup{}, nil
 	}
 
+	downloadOpts = normalizeDownloadOptions(downloadOpts)
+
 	// Ensure database exists (download if needed)
-	if err := EnsureDatabase(dbPath); err != nil {
+	if err := EnsureDatabaseWithOptions(dbPath, downloadOpts); err != nil {
 		return nil, fmt.Errorf("ensure database: %w", err)
 	}
 
@@ -245,6 +190,7 @@ func NewWithAutoUpdate(dbPath string, updateInterval time.Duration) (*Lookup, er
 		updateInterval: updateInterval,
 		stopChan:       make(chan struct{}),
 		dnsCache:       make(map[string]RegionInfo),
+		downloadOpts:   downloadOpts,
 	}
 
 	// Start auto-update goroutine if interval is set
@@ -279,7 +225,7 @@ func (l *Lookup) Update() error {
 
 	// Download to temporary file
 	tempPath := l.path + ".update"
-	if err := downloadDatabase(tempPath); err != nil {
+	if err := downloadDatabaseWithOptions(tempPath, l.downloadOpts); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 	defer os.Remove(tempPath) // Clean up temp file
@@ -317,6 +263,87 @@ func (l *Lookup) Update() error {
 
 // downloadDatabase downloads the GeoIP database to the specified path
 func downloadDatabase(dbPath string) error {
+	return downloadDatabaseWithOptions(dbPath, DownloadOptions{})
+}
+
+func downloadDatabaseWithOptions(dbPath string, opts DownloadOptions) error {
+	opts = normalizeDownloadOptions(opts)
+	attempts := downloadAttempts(opts.Proxies)
+	failures := make([]string, 0, len(attempts))
+
+	for idx, attempt := range attempts {
+		if attempt.proxyURL != "" {
+			log.Printf("📥 GeoIP download via proxy %d/%d: %s", idx+1, len(attempts), attempt.label)
+		}
+		if err := downloadDatabaseOnce(dbPath, attempt.proxyURL); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", attempt.label, err))
+			log.Printf("⚠️  GeoIP download failed via %s: %v", attempt.label, err)
+			continue
+		}
+		log.Printf("✅ GeoIP database downloaded successfully to %s", dbPath)
+		return nil
+	}
+
+	return fmt.Errorf("all geoip download attempts failed: %s", strings.Join(failures, "; "))
+}
+
+type downloadAttempt struct {
+	proxyURL string
+	label    string
+}
+
+func downloadAttempts(proxies []string) []downloadAttempt {
+	if len(proxies) == 0 {
+		return []downloadAttempt{{label: "direct"}}
+	}
+
+	attempts := make([]downloadAttempt, 0, len(proxies))
+	for _, proxyURL := range proxies {
+		attempts = append(attempts, downloadAttempt{
+			proxyURL: proxyURL,
+			label:    maskedProxyURL(proxyURL),
+		})
+	}
+	return attempts
+}
+
+func normalizeDownloadOptions(opts DownloadOptions) DownloadOptions {
+	opts.Proxies = cleanProxyList(opts.Proxies)
+	return opts
+}
+
+func cleanProxyList(proxies []string) []string {
+	if len(proxies) == 0 {
+		return nil
+	}
+
+	cleaned := make([]string, 0, len(proxies))
+	for _, proxyURL := range proxies {
+		proxyURL = strings.TrimSpace(proxyURL)
+		if proxyURL != "" {
+			cleaned = append(cleaned, proxyURL)
+		}
+	}
+	return cleaned
+}
+
+func maskedProxyURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.User == nil {
+		return rawURL
+	}
+
+	cloned := *parsed
+	username := cloned.User.Username()
+	if _, ok := cloned.User.Password(); ok {
+		cloned.User = url.UserPassword(username, "xxxxx")
+	} else {
+		cloned.User = url.User(username)
+	}
+	return cloned.String()
+}
+
+func downloadDatabaseOnce(dbPath, proxyURL string) error {
 	// Create parent directory if needed
 	dir := filepath.Dir(dbPath)
 	if dir != "" && dir != "." {
@@ -326,8 +353,11 @@ func downloadDatabase(dbPath string) error {
 	}
 
 	// Download with timeout
-	client := &http.Client{Timeout: 60 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, DefaultGeoIPURL, nil)
+	client, err := newDownloadHTTPClient(proxyURL)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodGet, geoIPDownloadURL, nil)
 	if err != nil {
 		return fmt.Errorf("create download request: %w", err)
 	}
@@ -380,6 +410,11 @@ func downloadDatabase(dbPath string) error {
 	}
 	tempFile = nil
 
+	// Validate MMDB format before replacing the destination.
+	if err := validateMMDB(tempPath); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
 	// Rename to target path
 	if err := os.Rename(tempPath, dbPath); err != nil {
 		return err
@@ -387,6 +422,69 @@ func downloadDatabase(dbPath string) error {
 	cleanup = false
 
 	return nil
+}
+
+func newDownloadHTTPClient(proxyURL string) (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if proxyURL == "" {
+		return &http.Client{Timeout: 60 * time.Second, Transport: transport}, nil
+	}
+
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse proxy url: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid proxy url %q", proxyURL)
+	}
+
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		transport.Proxy = http.ProxyURL(parsed)
+	case "socks", "socks5", "socks5h":
+		socksURL := *parsed
+		socksURL.Scheme = "socks5"
+		forward := &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
+		dialer, err := netproxy.FromURL(&socksURL, forward)
+		if err != nil {
+			return nil, fmt.Errorf("create socks5 dialer: %w", err)
+		}
+		if contextDialer, ok := dialer.(netproxy.ContextDialer); ok {
+			transport.DialContext = contextDialer.DialContext
+		} else {
+			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				return dialProxyWithContext(ctx, dialer, network, address)
+			}
+		}
+		transport.Proxy = nil
+	default:
+		return nil, fmt.Errorf("unsupported proxy scheme %q", parsed.Scheme)
+	}
+
+	return &http.Client{Timeout: 60 * time.Second, Transport: transport}, nil
+}
+
+func dialProxyWithContext(ctx context.Context, dialer netproxy.Dialer, network, address string) (net.Conn, error) {
+	type dialResult struct {
+		conn net.Conn
+		err  error
+	}
+
+	resultCh := make(chan dialResult, 1)
+	go func() {
+		conn, err := dialer.Dial(network, address)
+		resultCh <- dialResult{conn: conn, err: err}
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result.conn, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // Close closes the GeoIP database and stops auto-update

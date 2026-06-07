@@ -141,12 +141,16 @@ geoip:
   port: 1221                  # defaults to listener.port if omitted
   auto_update_enabled: true   # auto-update the GeoIP database
   auto_update_interval: 24h   # check interval
+  download_proxies:           # optional, tried from top to bottom
+    - "http://127.0.0.1:7890"
+    - "socks5://127.0.0.1:7891"
 ```
 
 The GeoIP router reuses the `listener.username` and `listener.password` for proxy authentication.
 
 Key behaviors:
 - The GeoIP database (MaxMind GeoLite2-Country) is **auto-downloaded** on first startup
+- GeoIP database downloads can use configured HTTP(S) or SOCKS5 proxies, retried in list order
 - Auto-update is enabled by default (checks every 24h) with hot-reload -- no restart needed
 - Node region classification happens automatically during startup and on every reload
 - Nodes whose IP cannot be resolved or looked up are placed in the `other` category

@@ -795,6 +795,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"port":                 0,
 				"auto_update_enabled":  false,
 				"auto_update_interval": "",
+				"download_proxies":     []string{},
 			},
 		}
 		if cfg != nil {
@@ -827,6 +828,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"port":                 cfg.GeoIP.Port,
 				"auto_update_enabled":  cfg.GeoIP.AutoUpdateEnabled,
 				"auto_update_interval": cfg.GeoIP.AutoUpdateInterval.String(),
+				"download_proxies":     cfg.GeoIP.DownloadProxies,
 			}
 		}
 		writeJSON(w, resp)
@@ -865,12 +867,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				Compress   bool   `json:"compress"`
 			} `json:"log"`
 			GeoIP *struct {
-				Enabled            bool   `json:"enabled"`
-				DatabasePath       string `json:"database_path"`
-				Listen             string `json:"listen"`
-				Port               uint16 `json:"port"`
-				AutoUpdateEnabled  bool   `json:"auto_update_enabled"`
-				AutoUpdateInterval string `json:"auto_update_interval"`
+				Enabled            bool     `json:"enabled"`
+				DatabasePath       string   `json:"database_path"`
+				Listen             string   `json:"listen"`
+				Port               uint16   `json:"port"`
+				AutoUpdateEnabled  bool     `json:"auto_update_enabled"`
+				AutoUpdateInterval string   `json:"auto_update_interval"`
+				DownloadProxies    []string `json:"download_proxies"`
 			} `json:"geoip"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -953,6 +956,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			nextCfg.GeoIP.Listen = req.GeoIP.Listen
 			nextCfg.GeoIP.Port = req.GeoIP.Port
 			nextCfg.GeoIP.AutoUpdateEnabled = req.GeoIP.AutoUpdateEnabled
+			nextCfg.GeoIP.DownloadProxies = cleanStringList(req.GeoIP.DownloadProxies)
 			if req.GeoIP.AutoUpdateInterval != "" {
 				if d, err := time.ParseDuration(req.GeoIP.AutoUpdateInterval); err == nil {
 					nextCfg.GeoIP.AutoUpdateInterval = d
@@ -1417,4 +1421,18 @@ func (s *Server) cleanupExpiredSessions() {
 // secureCompareStrings performs constant-time string comparison to prevent timing attacks.
 func secureCompareStrings(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func cleanStringList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			cleaned = append(cleaned, value)
+		}
+	}
+	return cleaned
 }

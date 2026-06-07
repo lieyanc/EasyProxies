@@ -41,9 +41,13 @@ func Build(cfg *config.Config) (option.Options, error) {
 			if interval == 0 {
 				interval = 24 * time.Hour // Default to 24 hours
 			}
-			geoLookup, err = geoip.NewWithAutoUpdate(cfg.GeoIP.DatabasePath, interval)
+			geoLookup, err = geoip.NewWithOptions(cfg.GeoIP.DatabasePath, interval, geoip.DownloadOptions{
+				Proxies: cfg.GeoIP.DownloadProxies,
+			})
 		} else {
-			geoLookup, err = geoip.New(cfg.GeoIP.DatabasePath)
+			geoLookup, err = geoip.NewWithOptions(cfg.GeoIP.DatabasePath, 0, geoip.DownloadOptions{
+				Proxies: cfg.GeoIP.DownloadProxies,
+			})
 		}
 		if err != nil {
 			log.Printf("⚠️  GeoIP database load failed: %v (region routing disabled)", err)
