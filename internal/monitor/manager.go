@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"easy-proxies/internal/geoip"
+
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -38,6 +40,7 @@ type NodeInfo struct {
 	Port          uint16 `json:"port,omitempty"`
 	Region        string `json:"region,omitempty"`  // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
 	Country       string `json:"country,omitempty"` // Full country name from GeoIP
+	ExitIP        string `json:"exit_ip,omitempty"` // Public egress IP observed through this node
 }
 
 // TimelineEvent represents a single usage event for debug tracking.
@@ -102,6 +105,8 @@ type Manager struct {
 	probeReady bool
 	mu         sync.RWMutex
 	nodes      map[string]*entry
+	geoMu      sync.RWMutex
+	geoLookup  *geoip.Lookup
 	ctx        context.Context
 	cancel     context.CancelFunc
 	logger     Logger
@@ -155,6 +160,54 @@ func NewManager(cfg Config) (*Manager, error) {
 // SetLogger sets the logger for the manager.
 func (m *Manager) SetLogger(logger Logger) {
 	m.logger = logger
+}
+
+// ConfigureGeoIP configures the runtime GeoIP lookup used to classify
+// observed proxy egress IPs during normal health checks.
+func (m *Manager) ConfigureGeoIP(enabled bool, dbPath string, autoUpdate bool, updateInterval time.Duration, proxies []string) error {
+	if !enabled || dbPath == "" {
+		m.geoMu.Lock()
+		old := m.geoLookup
+		m.geoLookup = nil
+		m.geoMu.Unlock()
+		if old != nil {
+			return old.Close()
+		}
+		return nil
+	}
+
+	if autoUpdate {
+		if updateInterval <= 0 {
+			updateInterval = 24 * time.Hour
+		}
+	} else {
+		updateInterval = 0
+	}
+
+	lookup, err := geoip.NewWithOptions(dbPath, updateInterval, geoip.DownloadOptions{
+		Proxies: proxies,
+	})
+	if err != nil {
+		return err
+	}
+
+	m.geoMu.Lock()
+	old := m.geoLookup
+	m.geoLookup = lookup
+	m.geoMu.Unlock()
+
+	if old != nil {
+		_ = old.Close()
+	}
+	return nil
+}
+
+// GeoIPReady reports whether runtime egress-IP classification is available.
+func (m *Manager) GeoIPReady() bool {
+	m.geoMu.RLock()
+	defer m.geoMu.RUnlock()
+	lookup := m.geoLookup
+	return lookup != nil && lookup.IsEnabled()
 }
 
 // StartPeriodicHealthCheck starts a background goroutine that periodically checks all nodes.
@@ -274,6 +327,13 @@ func (m *Manager) Stop() {
 	if m.cancel != nil {
 		m.cancel()
 	}
+	m.geoMu.Lock()
+	lookup := m.geoLookup
+	m.geoLookup = nil
+	m.geoMu.Unlock()
+	if lookup != nil {
+		_ = lookup.Close()
+	}
 }
 
 func parsePort(value string) uint16 {
@@ -381,6 +441,34 @@ func (m *Manager) Probe(ctx context.Context, tag string) (time.Duration, error) 
 	}
 	e.recordProbeLatency(latency)
 	return latency, nil
+}
+
+// UpdateExitIP records the public egress IP observed through a node and
+// updates the node region using the runtime GeoIP database.
+func (m *Manager) UpdateExitIP(tag, ipStr string) error {
+	ip := net.ParseIP(strings.TrimSpace(ipStr))
+	if ip == nil {
+		return fmt.Errorf("invalid exit ip %q", ipStr)
+	}
+
+	region := geoip.RegionInfo{
+		Code:    geoip.RegionOther,
+		Country: "Unknown",
+		ISOCode: "",
+	}
+	m.geoMu.RLock()
+	lookup := m.geoLookup
+	if lookup != nil && lookup.IsEnabled() {
+		region = lookup.LookupIP(ip.String())
+	}
+	m.geoMu.RUnlock()
+
+	e, err := m.entry(tag)
+	if err != nil {
+		return err
+	}
+	e.updateExitInfo(ip.String(), region.Code, region.Country)
+	return nil
 }
 
 // Release clears blacklist state for the given node.
@@ -547,6 +635,20 @@ func (e *entry) recordProbeLatency(d time.Duration) {
 	e.mu.Unlock()
 }
 
+func (e *entry) updateExitInfo(exitIP, region, country string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if region == "" {
+		region = geoip.RegionOther
+	}
+	if country == "" {
+		country = "Unknown"
+	}
+	e.info.ExitIP = exitIP
+	e.info.Region = region
+	e.info.Country = country
+}
+
 // RecordFailure updates failure counters.
 func (h *EntryHandle) RecordFailure(err error) {
 	if h == nil || h.ref == nil {
@@ -662,4 +764,17 @@ func (h *EntryHandle) LastLatency() time.Duration {
 		return 0
 	}
 	return h.ref.lastProbe
+}
+
+// Region returns the latest region classified from the node's observed egress IP.
+func (h *EntryHandle) Region() string {
+	if h == nil || h.ref == nil {
+		return geoip.RegionOther
+	}
+	h.ref.mu.RLock()
+	defer h.ref.mu.RUnlock()
+	if h.ref.info.Region == "" {
+		return geoip.RegionOther
+	}
+	return h.ref.info.Region
 }

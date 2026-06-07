@@ -176,8 +176,8 @@ Key behaviors:
 - The GeoIP database (MaxMind GeoLite2-Country) is **auto-downloaded** on first startup
 - GeoIP database downloads can use configured HTTP(S) or SOCKS5 proxies, retried in list order
 - Auto-update is enabled by default (checks every 24h) with hot-reload -- no restart needed
-- Node region classification happens automatically during startup and on every reload
-- Nodes whose IP cannot be resolved or looked up are placed in the `other` category
+- Node region classification is learned during health checks from each node's observed public egress IP
+- Nodes whose egress IP cannot be detected or looked up are placed in the `other` category
 
 ### How to Use
 
@@ -267,12 +267,11 @@ resp, err := client.Get("http://example.com")
 
 ### How It Works
 
-1. On startup, each node's server IP is resolved and looked up in the MaxMind GeoLite2-Country database
-2. Nodes are grouped into per-region pools (`pool-jp`, `pool-kr`, `pool-us`, etc.) with independent health checking
+1. Health checks dial through each node and detect the node's public egress IP
+2. The egress IP is looked up in the MaxMind GeoLite2-Country database and stored on the node
 3. The GeoIP router listens on its own port and inspects the request path for a region prefix
-4. Matching requests are routed through the corresponding region pool; unmatched requests use the global pool
+4. Matching requests are routed through a dynamic region pool that filters nodes by the latest egress-IP region; unmatched requests use the global pool
 5. Each region pool uses the same scheduling algorithm configured in the `pool` section
-6. DNS lookup results are cached to avoid repeated resolution on reload
 
 ## Supported Protocols
 

@@ -415,13 +415,17 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
         控制台日志
       </div>
+      <div class="nav-item" onclick="switchTab('ota')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+        OTA 更新
+      </div>
       <div class="nav-item" onclick="switchTab('settings')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         系统设置
       </div>
     </div>
     <div style="padding: 0 20px 16px; text-align: center;">
-      <a href="https://github.com/lieyanc/easy-proxies" target="_blank" rel="noopener" style="display:inline-flex; align-items:center; gap:6px; color:var(--text-muted); text-decoration:none; font-size:12px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); transition:all 0.2s;" onmouseover="this.style.borderColor='var(--primary)';this.style.color='var(--text-main)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-muted)'">
+      <a href="https://github.com/lieyanc/EasyProxies" target="_blank" rel="noopener" style="display:inline-flex; align-items:center; gap:6px; color:var(--text-muted); text-decoration:none; font-size:12px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); transition:all 0.2s;" onmouseover="this.style.borderColor='var(--primary)';this.style.color='var(--text-main)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-muted)'">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
         <span id="githubStars">-</span>
@@ -643,6 +647,55 @@
         </div>
       </div>
 
+      <!-- OTA Tab -->
+      <div id="otaTab" class="tab-content">
+        <div style="max-width: 800px; margin: 0 auto;">
+          <div style="font-size: 20px; font-weight: 700; margin-bottom: 24px; color: var(--text-main);">系统更新 (OTA)</div>
+          <form onsubmit="handleOtaSave(event)">
+            <div class="panel" style="margin-bottom: 16px;">
+              <div class="panel-header">
+                <div class="panel-title">更新配置</div>
+                <div style="display:flex; gap:8px;">
+                  <button type="button" class="btn btn-sm" onclick="checkUpdateNow()">检查更新</button>
+                  <button type="button" class="btn btn-sm btn-primary" onclick="applyUpdateNow()">下载/应用</button>
+                  <button type="button" class="btn btn-sm" onclick="dismissUpdate()">忽略</button>
+                </div>
+              </div>
+              <div style="padding: 16px;">
+                <div class="checkbox-grid">
+                  <div class="checkbox-row"><input type="checkbox" id="settingUpdateEnabled" /><label for="settingUpdateEnabled">启用后台更新检查</label></div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                  <div class="form-group">
+                    <label>更新通道</label>
+                    <select id="settingUpdateChannel" class="setting-input">
+                      <option value="stable">stable - 正式版自动应用</option>
+                      <option value="dev">dev - 开发版确认后应用</option>
+                    </select>
+                  </div>
+                  <div class="form-group"><label>检查间隔</label><input type="text" id="settingUpdateInterval" class="setting-input" placeholder="1h" /></div>
+                  <div class="form-group"><label>Release 代理</label><input type="text" id="settingUpdateProxy" class="setting-input" placeholder="https://dl.repo.chycloud.top" /></div>
+                  <div class="form-group"><label>GitHub 仓库</label><input type="text" id="settingUpdateRepo" class="setting-input" placeholder="lieyanc/easy-proxies" /></div>
+                </div>
+                <div style="margin-top:12px; display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                  <div class="stat-panel" style="padding:12px;"><div class="stat-title">当前版本</div><div class="stat-sub" id="updateCurrentVersion">dev</div></div>
+                  <div class="stat-panel" style="padding:12px;"><div class="stat-title">最新版本</div><div class="stat-sub" id="updateLatestVersion">-</div></div>
+                  <div class="stat-panel" style="padding:12px;"><div class="stat-title">更新状态</div><div class="stat-sub" id="updateState">idle</div></div>
+                </div>
+                <div style="margin-top:12px;">
+                  <div class="progress-bar"><div class="progress-fill" id="updateProgressFill" style="width:0%"></div></div>
+                  <div id="updateMessage" style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">Release 资产需包含 easy-proxies-&lt;os&gt;-&lt;arch&gt; 与 .sha256</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 12px; padding: 8px 0 24px;">
+              <button type="submit" class="btn btn-primary" style="padding: 10px 32px; font-size: 14px;">保存 OTA 配置</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
       <!-- Settings Tab -->
       <div id="settingsTab" class="tab-content">
         <div style="max-width: 800px; margin: 0 auto;">
@@ -764,43 +817,6 @@
             </div>
 
             <div class="panel" style="margin-bottom: 16px;">
-              <div class="panel-header">
-                <div class="panel-title">系统更新 (OTA)</div>
-                <div style="display:flex; gap:8px;">
-                  <button type="button" class="btn btn-sm" onclick="checkUpdateNow()">检查更新</button>
-                  <button type="button" class="btn btn-sm btn-primary" onclick="applyUpdateNow()">下载/应用</button>
-                  <button type="button" class="btn btn-sm" onclick="dismissUpdate()">忽略</button>
-                </div>
-              </div>
-              <div style="padding: 16px;">
-                <div class="checkbox-grid">
-                  <div class="checkbox-row"><input type="checkbox" id="settingUpdateEnabled" /><label for="settingUpdateEnabled">启用后台更新检查</label></div>
-                </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-                  <div class="form-group">
-                    <label>更新通道</label>
-                    <select id="settingUpdateChannel" class="setting-input">
-                      <option value="stable">stable - 正式版自动应用</option>
-                      <option value="dev">dev - 开发版确认后应用</option>
-                    </select>
-                  </div>
-                  <div class="form-group"><label>检查间隔</label><input type="text" id="settingUpdateInterval" class="setting-input" placeholder="1h" /></div>
-                  <div class="form-group"><label>Release 代理</label><input type="text" id="settingUpdateProxy" class="setting-input" placeholder="https://dl.repo.chycloud.top" /></div>
-                  <div class="form-group"><label>GitHub 仓库</label><input type="text" id="settingUpdateRepo" class="setting-input" placeholder="lieyanc/easy-proxies" /></div>
-                </div>
-                <div style="margin-top:12px; display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
-                  <div class="stat-panel" style="padding:12px;"><div class="stat-title">当前版本</div><div class="stat-sub" id="updateCurrentVersion">dev</div></div>
-                  <div class="stat-panel" style="padding:12px;"><div class="stat-title">最新版本</div><div class="stat-sub" id="updateLatestVersion">-</div></div>
-                  <div class="stat-panel" style="padding:12px;"><div class="stat-title">更新状态</div><div class="stat-sub" id="updateState">idle</div></div>
-                </div>
-                <div style="margin-top:12px;">
-                  <div class="progress-bar"><div class="progress-fill" id="updateProgressFill" style="width:0%"></div></div>
-                  <div id="updateMessage" style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">Release 资产需包含 easy-proxies-&lt;os&gt;-&lt;arch&gt; 与 .sha256</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel" style="margin-bottom: 16px;">
               <div class="panel-header"><div class="panel-title">订阅配置</div></div>
               <div style="padding: 16px;">
                 <div class="checkbox-grid">
@@ -913,6 +929,7 @@
     let configNodes = [];
     let _savedSubSnapshot = '';
     let _savedCoreSnapshot = '';
+    let _savedUpdateSnapshot = '';
 
     function showFullscreenLoading(text, subtext) {
       document.getElementById('fullscreenLoadingText').textContent = text || '处理中...';
@@ -991,6 +1008,7 @@
       } else {
         stopLogPolling();
       }
+      if (name === 'ota') loadOtaPage();
       if (name === 'settings') loadSettingsPage();
     }
 
@@ -1209,7 +1227,10 @@
 
         return `<tr>
           <td><span class="badge ${badge}">${statusText}</span></td>
-          <td>${EMOJIS[n.region||'other']} ${(n.region||'other').toUpperCase()}</td>
+          <td>
+            <div>${EMOJIS[n.region||'other']} ${(n.region||'other').toUpperCase()}</div>
+            <div class="tt-mono" style="font-size: 11px; color: var(--text-muted)">${escapeHtml(n.exit_ip || '-')}</div>
+          </td>
           <td>
             <div style="font-weight: 500">${escapeHtml(n.name || n.tag)}</div>
             <div style="font-size: 11px; color: var(--text-muted)">${escapeHtml(n.tag)}</div>
@@ -1523,14 +1544,6 @@
         document.getElementById('settingLogMaxAge').value = logCfg.max_age || 7;
         document.getElementById('settingLogCompress').checked = logCfg.compress || false;
         toggleLogFileSettings();
-        // OTA
-        const updateCfg = d.update || {};
-        document.getElementById('settingUpdateEnabled').checked = updateCfg.enabled || false;
-        document.getElementById('settingUpdateChannel').value = updateCfg.channel || 'stable';
-        document.getElementById('settingUpdateInterval').value = updateCfg.check_interval || '1h';
-        document.getElementById('settingUpdateProxy').value = updateCfg.proxy_base_url || 'https://dl.repo.chycloud.top';
-        document.getElementById('settingUpdateRepo').value = updateCfg.repo || 'lieyanc/easy-proxies';
-        loadUpdateStatus();
         // Subscription
         try {
           const sr = await fetch('/api/subscription/config'); const sd = await sr.json();
@@ -1578,12 +1591,39 @@
         log_max_backups: document.getElementById('settingLogMaxBackups').value,
         log_max_age: document.getElementById('settingLogMaxAge').value,
         log_compress: document.getElementById('settingLogCompress').checked,
-        update_enabled: document.getElementById('settingUpdateEnabled').checked,
-        update_channel: document.getElementById('settingUpdateChannel').value,
-        update_interval: document.getElementById('settingUpdateInterval').value,
-        update_proxy: document.getElementById('settingUpdateProxy').value,
-        update_repo: document.getElementById('settingUpdateRepo').value,
       });
+    }
+    function _buildUpdatePayload() {
+      return {
+        enabled: document.getElementById('settingUpdateEnabled').checked,
+        channel: document.getElementById('settingUpdateChannel').value,
+        check_interval: document.getElementById('settingUpdateInterval').value || '1h',
+        proxy_base_url: document.getElementById('settingUpdateProxy').value,
+        repo: document.getElementById('settingUpdateRepo').value,
+      };
+    }
+    function _buildUpdateSnapshot() {
+      return JSON.stringify(_buildUpdatePayload());
+    }
+    function applyUpdateConfig(updateCfg) {
+      document.getElementById('settingUpdateEnabled').checked = updateCfg.enabled || false;
+      document.getElementById('settingUpdateChannel').value = updateCfg.channel || 'stable';
+      document.getElementById('settingUpdateInterval').value = updateCfg.check_interval || '1h';
+      document.getElementById('settingUpdateProxy').value = updateCfg.proxy_base_url || 'https://dl.repo.chycloud.top';
+      document.getElementById('settingUpdateRepo').value = updateCfg.repo || 'lieyanc/easy-proxies';
+    }
+    async function loadOtaPage() {
+      try {
+        const r = await fetch('/api/settings');
+        if (!r.ok) throw new Error('load settings failed');
+        const d = await r.json();
+        applyUpdateConfig(d.update || {});
+        _savedUpdateSnapshot = _buildUpdateSnapshot();
+        await loadUpdateStatus();
+      } catch(e) {
+        console.error('Failed to load OTA settings:', e);
+        document.getElementById('updateMessage').textContent = 'OTA 配置读取失败';
+      }
     }
     function toggleLogFileSettings() {
       const output = document.getElementById('settingLogOutput').value;
@@ -1653,13 +1693,6 @@
             auto_update_enabled: document.getElementById('settingGeoIPAutoUpdate').checked,
             auto_update_interval: document.getElementById('settingGeoIPUpdateInterval').value || '24h',
             download_proxies: document.getElementById('settingGeoIPDownloadProxies').value.split('\n').map(s => s.trim()).filter(s => s),
-          },
-          update: {
-            enabled: document.getElementById('settingUpdateEnabled').checked,
-            channel: document.getElementById('settingUpdateChannel').value,
-            check_interval: document.getElementById('settingUpdateInterval').value || '1h',
-            proxy_base_url: document.getElementById('settingUpdateProxy').value,
-            repo: document.getElementById('settingUpdateRepo').value,
           }
         };
         try {
@@ -1700,6 +1733,40 @@
       refresh();
     }
 
+    async function handleOtaSave(e) {
+      e.preventDefault();
+      const saveBtn = e.target.querySelector('button[type="submit"]');
+      const originalText = saveBtn.textContent;
+      const currentUpdateSnapshot = _buildUpdateSnapshot();
+
+      if (currentUpdateSnapshot === _savedUpdateSnapshot) {
+        showToast('OTA 配置未变更');
+        return;
+      }
+
+      saveBtn.disabled = true; saveBtn.textContent = '保存中...'; saveBtn.style.opacity = '0.6';
+      try {
+        const settingsRes = await fetch('/api/settings');
+        if (!settingsRes.ok) throw new Error('load settings failed');
+        const payload = await settingsRes.json();
+        payload.update = _buildUpdatePayload();
+
+        const saveRes = await fetch('/api/settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        if (!saveRes.ok) {
+          const d = await saveRes.json().catch(()=>({}));
+          showToast(d.error || 'OTA 配置保存失败', 'error');
+          return;
+        }
+
+        showToast('OTA 配置已保存');
+        await loadOtaPage();
+      } catch(e) {
+        showToast('OTA 配置保存失败', 'error');
+      } finally {
+        saveBtn.disabled = false; saveBtn.textContent = originalText; saveBtn.style.opacity = '1';
+      }
+    }
+
     async function loadUpdateStatus() {
       try {
         const [versionRes, statusRes] = await Promise.all([
@@ -1721,7 +1788,7 @@
           document.getElementById('updateLatestVersion').textContent = latest;
           document.getElementById('updateProgressFill').style.width = progress + '%';
           document.getElementById('updateMessage').textContent = s.error || s.release_notes || (s.last_check ? ('上次检查: ' + s.last_check) : 'Release 资产需包含 easy-proxies-<os>-<arch> 与 .sha256');
-          if (['checking','downloading','applying'].includes(state) && document.getElementById('settingsTab').classList.contains('active')) {
+          if (['checking','downloading','applying'].includes(state) && document.getElementById('otaTab').classList.contains('active')) {
             setTimeout(loadUpdateStatus, 1500);
           }
         }
@@ -1883,7 +1950,7 @@
     checkAuth().then(ok => { if(ok) { refresh(); startAutoRefresh(); } });
 
     // Fetch GitHub stars
-    fetch('https://api.github.com/repos/lieyanc/easy-proxies')
+    fetch('https://api.github.com/repos/lieyanc/EasyProxies')
       .then(r => r.json())
       .then(d => { if(d.stargazers_count !== undefined) document.getElementById('githubStars').textContent = d.stargazers_count; })
       .catch(() => {});

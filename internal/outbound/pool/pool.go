@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +36,10 @@ const (
 	modeRandom     = "random"
 	modeBalance    = "balance"
 	modeLatency    = "latency"
+
+	egressIPProbeHost = "api.ipify.org"
+	egressIPProbePath = "/"
+	egressIPProbePort = 80
 )
 
 // Options controls pool outbound behaviour.
@@ -48,6 +54,12 @@ type Options struct {
 	// Multi-member pools pick a different member per retry; single-member pools retry the same member.
 	RetryAttempts int
 	Metadata      map[string]MemberMeta
+	// RegionFilter restricts this pool to members whose runtime GeoIP region
+	// matches the value. The region is learned from the observed egress IP.
+	RegionFilter string
+	// SkipMonitor avoids duplicate monitor registration/startup probing for
+	// derived pools such as GeoIP region-filter pools.
+	SkipMonitor bool
 }
 
 // MemberMeta carries optional descriptive information for monitoring UI.
@@ -71,6 +83,19 @@ type memberState struct {
 	tag      string
 	entry    *monitor.EntryHandle
 	shared   *sharedMemberState
+}
+
+func (m *memberState) entryHandle() *monitor.EntryHandle {
+	if m == nil {
+		return nil
+	}
+	if m.entry != nil {
+		return m.entry
+	}
+	if m.shared != nil {
+		return m.shared.entryHandle()
+	}
+	return nil
 }
 
 type poolOutbound struct {
@@ -117,7 +142,7 @@ func newPool(ctx context.Context, _ adapter.Router, logger singlog.ContextLogger
 	}
 
 	// Register nodes immediately if monitor is available
-	if monitorMgr != nil {
+	if monitorMgr != nil && !normalized.SkipMonitor {
 		logger.Info("registering ", len(normalized.Members), " nodes to monitor")
 		for _, memberTag := range normalized.Members {
 			// Acquire shared state for this tag (creates if not exists)
@@ -149,7 +174,7 @@ func newPool(ctx context.Context, _ adapter.Router, logger singlog.ContextLogger
 				logger.Warn("failed to register node: ", memberTag)
 			}
 		}
-	} else {
+	} else if monitorMgr == nil {
 		logger.Warn("monitor manager is nil, skipping node registration")
 	}
 
@@ -196,7 +221,7 @@ func (p *poolOutbound) Start(stage adapter.StartStage) error {
 		return err
 	}
 	// 在初始化完成后，立即在后台触发健康检查
-	if p.monitor != nil {
+	if p.monitor != nil && !p.options.SkipMonitor {
 		go p.probeAllMembersOnStartup()
 	}
 	return nil
@@ -226,7 +251,7 @@ func (p *poolOutbound) initializeMembersLocked() error {
 		}
 
 		// Connect to existing monitor entry if available
-		if p.monitor != nil {
+		if p.monitor != nil && !p.options.SkipMonitor {
 			meta := p.options.Metadata[tag]
 			info := monitor.NodeInfo{
 				Tag:           tag,
@@ -314,7 +339,9 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 				return
 			}
 
-			results <- probeResult{member: m, success: true, latency: time.Since(start)}
+			latency := time.Since(start)
+			p.updateExitIP(ctx, m)
+			results <- probeResult{member: m, success: true, latency: latency}
 		}(member)
 	}
 
@@ -538,6 +565,9 @@ func (p *poolOutbound) pickMember(network string) (*memberState, error) {
 func (p *poolOutbound) availableMembersLocked(now time.Time, network string, buf []*memberState) []*memberState {
 	result := buf[:0]
 	for _, member := range p.members {
+		if !p.matchesRegionFilter(member) {
+			continue
+		}
 		// Check blacklist via shared state (auto-clears if expired)
 		if member.shared != nil && member.shared.isBlacklisted(now) {
 			continue
@@ -555,19 +585,44 @@ func (p *poolOutbound) releaseIfAllBlacklistedLocked(now time.Time) bool {
 		return false
 	}
 	// Check if all members are blacklisted
+	eligible := 0
 	for _, member := range p.members {
+		if !p.matchesRegionFilter(member) {
+			continue
+		}
+		eligible++
 		if member.shared == nil || !member.shared.isBlacklisted(now) {
 			return false
 		}
 	}
+	if eligible == 0 {
+		return false
+	}
 	// All blacklisted, force release all
 	for _, member := range p.members {
+		if !p.matchesRegionFilter(member) {
+			continue
+		}
 		if member.shared != nil {
 			member.shared.forceRelease()
 		}
 	}
 	p.logger.Warn("all upstream proxies were blacklisted, releasing them for retry")
 	return true
+}
+
+func (p *poolOutbound) matchesRegionFilter(member *memberState) bool {
+	if p.options.RegionFilter == "" {
+		return true
+	}
+	region := ""
+	if entry := member.entryHandle(); entry != nil {
+		region = entry.Region()
+	}
+	if region == "" {
+		region = p.options.Metadata[member.tag].Region
+	}
+	return region == p.options.RegionFilter
 }
 
 func (p *poolOutbound) selectMember(candidates []*memberState) *memberState {
@@ -599,10 +654,11 @@ func (p *poolOutbound) selectMember(candidates []*memberState) *memberState {
 		var minLatency time.Duration
 		hasMeasured := false
 		for _, member := range candidates {
-			if member.entry == nil {
+			entry := member.entryHandle()
+			if entry == nil {
 				continue
 			}
-			latency := member.entry.LastLatency()
+			latency := entry.LastLatency()
 			if latency <= 0 {
 				continue
 			}
@@ -697,6 +753,69 @@ func httpProbe(conn net.Conn, host string) (time.Duration, error) {
 	return ttfb, nil
 }
 
+func httpGetBody(conn net.Conn, host, path string, maxBody int64) (string, error) {
+	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: easy-proxies\r\n\r\n", path, host)
+
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write([]byte(req)); err != nil {
+		return "", fmt.Errorf("write request: %w", err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("unexpected status %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if err != nil {
+		return "", fmt.Errorf("read body: %w", err)
+	}
+	if int64(len(body)) > maxBody {
+		return "", fmt.Errorf("response body exceeds %d bytes", maxBody)
+	}
+	return string(body), nil
+}
+
+func (p *poolOutbound) updateExitIP(ctx context.Context, member *memberState) {
+	if p.monitor == nil || !p.monitor.GeoIPReady() {
+		return
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	exitIP, err := p.probeExitIP(probeCtx, member)
+	if err != nil {
+		return
+	}
+	_ = p.monitor.UpdateExitIP(member.tag, exitIP)
+}
+
+func (p *poolOutbound) probeExitIP(ctx context.Context, member *memberState) (string, error) {
+	destination := M.ParseSocksaddrHostPort(egressIPProbeHost, egressIPProbePort)
+	conn, err := member.outbound.DialContext(ctx, N.NetworkTCP, destination)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	body, err := httpGetBody(conn, egressIPProbeHost, egressIPProbePath, 512)
+	if err != nil {
+		return "", err
+	}
+	ip := strings.TrimSpace(body)
+	if parsed := net.ParseIP(ip); parsed != nil {
+		return parsed.String(), nil
+	}
+	return "", fmt.Errorf("invalid exit ip response %q", ip)
+}
+
 func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Context) (time.Duration, error) {
 	if p.monitor == nil {
 		return nil
@@ -730,6 +849,7 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 		if member.entry != nil {
 			member.entry.RecordSuccessWithLatency(duration)
 		}
+		p.updateExitIP(ctx, member)
 		// Clear pool blacklist on successful probe — a node that passes
 		// health check should be available for selection immediately,
 		// not remain blacklisted for the full duration (fixes #8, #9).
@@ -797,6 +917,7 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 		if member.entry != nil {
 			member.entry.RecordSuccessWithLatency(duration)
 		}
+		p.updateExitIP(ctx, member)
 		// Clear pool blacklist on successful probe (fixes #8, #9)
 		if member.shared != nil {
 			member.shared.forceRelease()

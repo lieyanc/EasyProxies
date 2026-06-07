@@ -110,6 +110,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	cfg := m.cfg
 	m.mu.Unlock()
 
+	m.configureMonitorGeoIP(cfg)
+
 	// Try to start, with automatic port conflict resolution
 	var instance *box.Box
 	maxRetries := 10
@@ -220,6 +222,8 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 		m.monitorMgr.ClearNodes()
 	}
 
+	m.configureMonitorGeoIP(newCfg)
+
 	// Create and start new box instance with automatic port conflict resolution
 	var instance *box.Box
 	maxRetries := 10
@@ -286,6 +290,7 @@ func (m *Manager) rollbackToOldConfig(ctx context.Context, oldCfg *config.Config
 		return
 	}
 	m.logger.Warnf("attempting rollback to previous config...")
+	m.configureMonitorGeoIP(oldCfg)
 	instance, err := m.createBox(ctx, oldCfg)
 	if err != nil {
 		m.logger.Errorf("rollback failed to create box: %v", err)
@@ -652,6 +657,36 @@ func (m *Manager) applyConfigSettings(cfg *config.Config) {
 		m.drainTimeout = defaultDrainTimeout
 	}
 	m.minAvailableNodes = cfg.SubscriptionRefresh.MinAvailableNodes
+}
+
+func (m *Manager) configureMonitorGeoIP(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	m.mu.RLock()
+	monitorMgr := m.monitorMgr
+	m.mu.RUnlock()
+	if monitorMgr == nil {
+		return
+	}
+	if cfg.GeoIP.Enabled && cfg.GeoIP.DatabasePath == "" {
+		m.logger.Warnf("GeoIP enabled but database_path is empty (egress region detection disabled)")
+		_ = monitorMgr.ConfigureGeoIP(false, "", false, 0, nil)
+		return
+	}
+	if err := monitorMgr.ConfigureGeoIP(
+		cfg.GeoIP.Enabled,
+		cfg.GeoIP.DatabasePath,
+		cfg.GeoIP.AutoUpdateEnabled,
+		cfg.GeoIP.AutoUpdateInterval,
+		cfg.GeoIP.DownloadProxies,
+	); err != nil {
+		m.logger.Warnf("GeoIP database load failed: %v (egress region detection disabled)", err)
+		return
+	}
+	if cfg.GeoIP.Enabled && monitorMgr.GeoIPReady() {
+		m.logger.Infof("GeoIP egress region detection enabled")
+	}
 }
 
 // defaultLogger is the fallback logger using standard log.
