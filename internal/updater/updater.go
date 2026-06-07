@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -79,6 +81,11 @@ const (
 	progressVerifyDone    = 95
 	progressApplying      = 98
 	progressComplete      = 100
+)
+
+var (
+	githubBaseURL    = "https://github.com"
+	githubAPIBaseURL = "https://api.github.com"
 )
 
 func New(cfg func() Config, dataDir func() string, logger *log.Logger, hooks RestartHooks) *Updater {
@@ -285,7 +292,7 @@ func (u *Updater) performUpdate(ctx context.Context) {
 	u.status.Progress = progressReleaseFound
 	u.mu.Unlock()
 
-	binaryPath, err := u.download(ctx, cfg, release)
+	binaryPath, err := u.download(ctx, release)
 	if err != nil {
 		u.setError("download failed: " + err.Error())
 		return
@@ -378,12 +385,14 @@ func (r releaseInfo) displayVersion() string {
 }
 
 func (u *Updater) checkForUpdate(ctx context.Context, cfg Config) (*releaseInfo, bool, error) {
-	tag := "latest"
 	if cfg.Channel != "stable" {
-		tag = "dev"
+		return u.checkDevForUpdate(ctx, cfg)
 	}
+	return u.checkStableForUpdate(ctx, cfg)
+}
 
-	url := fmt.Sprintf("%s/api/releases/%s/%s", strings.TrimRight(cfg.ProxyBaseURL, "/"), cfg.Repo, tag)
+func (u *Updater) checkStableForUpdate(ctx context.Context, cfg Config) (*releaseInfo, bool, error) {
+	url := fmt.Sprintf("%s/repos/%s/releases/latest", strings.TrimRight(githubAPIBaseURL, "/"), cfg.Repo)
 	u.logger.Printf("update: checking %s", url)
 
 	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -393,6 +402,7 @@ func (u *Updater) checkForUpdate(ctx context.Context, cfg Config) (*releaseInfo,
 	if err != nil {
 		return nil, false, err
 	}
+	setGitHubAPIHeaders(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, false, err
@@ -404,17 +414,12 @@ func (u *Updater) checkForUpdate(ctx context.Context, cfg Config) (*releaseInfo,
 		return nil, false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return nil, false, &httpStatusError{URL: url, StatusCode: resp.StatusCode}
 	}
 
 	var release releaseInfo
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, false, fmt.Errorf("decode release: %w", err)
-	}
-	if cfg.Channel != "stable" {
-		if err := u.loadReleaseVersion(checkCtx, cfg, &release); err != nil {
-			u.logger.Printf("update: version metadata unavailable for %s: %v", release.TagName, err)
-		}
 	}
 	if !u.isNewer(release, cfg.Channel) {
 		u.logger.Printf("update: already up to date (%s)", release.displayVersion())
@@ -423,7 +428,55 @@ func (u *Updater) checkForUpdate(ctx context.Context, cfg Config) (*releaseInfo,
 	return &release, true, nil
 }
 
-func (u *Updater) loadReleaseVersion(ctx context.Context, cfg Config, release *releaseInfo) error {
+func (u *Updater) checkDevForUpdate(ctx context.Context, cfg Config) (*releaseInfo, bool, error) {
+	release := u.devReleaseInfo(cfg)
+	versionURL := releaseAssetURL(cfg, release.TagName, "version.json")
+	u.logger.Printf("update: checking dev metadata %s", versionURL)
+
+	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if err := u.loadReleaseVersion(checkCtx, &release); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			u.logger.Printf("update: no dev release metadata found for repo %s", cfg.Repo)
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("load dev metadata: %w", err)
+	}
+	if release.TargetCommitish == "" {
+		release.TargetCommitish = release.Commit
+	}
+	if !u.isNewer(release, cfg.Channel) {
+		u.logger.Printf("update: already up to date (%s)", release.displayVersion())
+		return &release, false, nil
+	}
+	return &release, true, nil
+}
+
+func (u *Updater) devReleaseInfo(cfg Config) releaseInfo {
+	tag := "dev"
+	targetName := u.targetName()
+	return releaseInfo{
+		TagName:    tag,
+		Prerelease: true,
+		Assets: []assetInfo{
+			{
+				Name:               targetName,
+				BrowserDownloadURL: releaseAssetURL(cfg, tag, targetName),
+			},
+			{
+				Name:               targetName + ".sha256",
+				BrowserDownloadURL: releaseAssetURL(cfg, tag, targetName+".sha256"),
+			},
+			{
+				Name:               "version.json",
+				BrowserDownloadURL: releaseAssetURL(cfg, tag, "version.json"),
+			},
+		},
+	}
+}
+
+func (u *Updater) loadReleaseVersion(ctx context.Context, release *releaseInfo) error {
 	var versionAsset *assetInfo
 	for i := range release.Assets {
 		if release.Assets[i].Name == "version.json" {
@@ -435,7 +488,10 @@ func (u *Updater) loadReleaseVersion(ctx context.Context, cfg Config, release *r
 		return fmt.Errorf("version.json asset not found")
 	}
 
-	versionURL := u.proxyDownloadURL(cfg, versionAsset.BrowserDownloadURL)
+	versionURL := strings.TrimSpace(versionAsset.BrowserDownloadURL)
+	if versionURL == "" {
+		return fmt.Errorf("version.json asset has empty download URL")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionURL, nil)
 	if err != nil {
 		return err
@@ -446,7 +502,7 @@ func (u *Updater) loadReleaseVersion(ctx context.Context, cfg Config, release *r
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("version metadata returned status %d", resp.StatusCode)
+		return &httpStatusError{URL: versionURL, StatusCode: resp.StatusCode}
 	}
 
 	var info releaseVersionInfo
@@ -456,6 +512,9 @@ func (u *Updater) loadReleaseVersion(ctx context.Context, cfg Config, release *r
 	release.Version = strings.TrimSpace(info.Version)
 	release.Commit = strings.TrimSpace(info.Commit)
 	release.BuildTime = strings.TrimSpace(info.BuildTime)
+	if tag := strings.TrimSpace(info.Tag); tag != "" {
+		release.TagName = tag
+	}
 	return nil
 }
 
@@ -561,7 +620,34 @@ func (u *Updater) targetName() string {
 	return "easy-proxies-" + target + ext
 }
 
-func (u *Updater) download(ctx context.Context, cfg Config, release *releaseInfo) (string, error) {
+func releaseAssetURL(cfg Config, tag, assetName string) string {
+	return strings.TrimRight(githubBaseURL, "/") +
+		"/" + strings.Trim(strings.TrimSpace(cfg.Repo), "/") +
+		"/releases/download/" + url.PathEscape(tag) +
+		"/" + url.PathEscape(assetName)
+}
+
+func setGitHubAPIHeaders(req *http.Request) {
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "easy-proxies-ota")
+}
+
+type httpStatusError struct {
+	URL        string
+	StatusCode int
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("%s returned status %d", e.URL, e.StatusCode)
+}
+
+func isHTTPStatus(err error, statusCode int) bool {
+	var statusErr *httpStatusError
+	return errors.As(err, &statusErr) && statusErr.StatusCode == statusCode
+}
+
+func (u *Updater) download(ctx context.Context, release *releaseInfo) (string, error) {
 	u.mu.Lock()
 	u.status.State = "downloading"
 	u.status.Progress = progressDownloadStart
@@ -598,7 +684,10 @@ func (u *Updater) download(ctx context.Context, cfg Config, release *releaseInfo
 	tmpPath := filepath.Join(updateDir, finalName+".tmp")
 	finalPath := filepath.Join(updateDir, finalName)
 
-	downloadURL := u.proxyDownloadURL(cfg, binaryAsset.BrowserDownloadURL)
+	downloadURL := strings.TrimSpace(binaryAsset.BrowserDownloadURL)
+	if downloadURL == "" {
+		return "", fmt.Errorf("asset %s in release %s has empty download URL", targetName, release.TagName)
+	}
 	if err := u.downloadFile(ctx, downloadURL, tmpPath, binaryAsset.Size); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("download binary: %w", err)
@@ -608,7 +697,11 @@ func (u *Updater) download(ctx context.Context, cfg Config, release *releaseInfo
 	u.status.Progress = progressVerifyStart
 	u.mu.Unlock()
 
-	sha256URL := u.proxyDownloadURL(cfg, sha256Asset.BrowserDownloadURL)
+	sha256URL := strings.TrimSpace(sha256Asset.BrowserDownloadURL)
+	if sha256URL == "" {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("asset %s.sha256 in release %s has empty download URL", targetName, release.TagName)
+	}
 	expectedHash, err := u.fetchSHA256(ctx, sha256URL)
 	if err != nil {
 		_ = os.Remove(tmpPath)
@@ -636,23 +729,6 @@ func (u *Updater) download(ctx context.Context, cfg Config, release *releaseInfo
 
 	u.logger.Printf("update: downloaded %s to %s", release.TagName, finalPath)
 	return finalPath, nil
-}
-
-func (u *Updater) proxyDownloadURL(cfg Config, browserURL string) string {
-	base := strings.TrimRight(cfg.ProxyBaseURL, "/")
-	const ghPrefix = "https://github.com/"
-	if !strings.HasPrefix(browserURL, ghPrefix) {
-		return browserURL
-	}
-	path := strings.TrimPrefix(browserURL, ghPrefix)
-	const relSegment = "/releases/download/"
-	idx := strings.Index(path, relSegment)
-	if idx < 0 {
-		return browserURL
-	}
-	ownerRepo := path[:idx]
-	tagAndAsset := path[idx+len(relSegment):]
-	return base + "/download/" + ownerRepo + "/" + tagAndAsset
 }
 
 func (u *Updater) downloadFile(ctx context.Context, url, destPath string, expectedSize int64) error {
@@ -900,9 +976,6 @@ func normalizeConfig(cfg Config) Config {
 	}
 	if cfg.CheckInterval <= 0 {
 		cfg.CheckInterval = time.Hour
-	}
-	if strings.TrimSpace(cfg.ProxyBaseURL) == "" {
-		cfg.ProxyBaseURL = "https://dl.repo.chycloud.top"
 	}
 	cfg.ProxyBaseURL = strings.TrimRight(strings.TrimSpace(cfg.ProxyBaseURL), "/")
 	cfg.Repo = strings.TrimSpace(cfg.Repo)

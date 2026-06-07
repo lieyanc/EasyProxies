@@ -2,6 +2,7 @@ BINARY_NAME ?= easy-proxies
 CMD ?= ./cmd/easy-proxies
 CONFIG ?= config.yaml
 BUILD_DIR ?= dist
+WEB_DIR ?= internal/monitor/web
 INSTALL_DIR ?= /opt/easy-proxies
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
@@ -14,12 +15,16 @@ VERSION_PKG ?= easy-proxies/internal/version
 BUILD_TAGS ?= with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api
 LDFLAGS ?= -s -w -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).BuildTime=$(BUILD_TIME)
 
-.PHONY: all build run test clean package install install-systemd docker-build
+.PHONY: all build web-build run test clean package install install-systemd docker-build
 
 all: build
 
 build:
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -trimpath -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) $(CMD)
+
+web-build:
+	npm --prefix $(WEB_DIR) ci
+	npm --prefix $(WEB_DIR) run build
 
 run: build
 	./$(BINARY_NAME) -config $(CONFIG)

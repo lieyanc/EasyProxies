@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -13,6 +14,7 @@ import (
 	mathrand "math/rand"
 	"net/http"
 	"net/url"
+	"path"
 	"runtime"
 	"strings"
 	"sync"
@@ -25,7 +27,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-//go:embed assets/index.html
+//go:embed assets
 var embeddedFS embed.FS
 
 // Session represents a user session with expiration.
@@ -244,6 +246,16 @@ func (s *Server) Shutdown(ctx context.Context) {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		assetName := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		if assetName != "" && assetName != "." {
+			if data, err := embeddedFS.ReadFile("assets/" + assetName); err == nil {
+				http.ServeContent(w, r, path.Base(assetName), time.Time{}, bytes.NewReader(data))
+				return
+			}
+		}
+	}
+
 	data, err := embeddedFS.ReadFile("assets/index.html")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -819,7 +831,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"enabled":        false,
 				"channel":        "stable",
 				"check_interval": "1h",
-				"proxy_base_url": "https://dl.repo.chycloud.top",
+				"proxy_base_url": "",
 				"repo":           "lieyanc/easy-proxies",
 			},
 		}
@@ -1025,9 +1037,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			nextCfg.Update.Repo = strings.TrimSpace(req.Update.Repo)
 			if nextCfg.Update.CheckInterval <= 0 {
 				nextCfg.Update.CheckInterval = time.Hour
-			}
-			if nextCfg.Update.ProxyBaseURL == "" {
-				nextCfg.Update.ProxyBaseURL = "https://dl.repo.chycloud.top"
 			}
 			if nextCfg.Update.Repo == "" {
 				nextCfg.Update.Repo = "lieyanc/easy-proxies"

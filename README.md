@@ -391,8 +391,9 @@ make install-systemd
 easy-proxies can self-update from GitHub Releases when `update.enabled` is enabled in `config.yaml` or the WebUI settings page.
 
 - `stable` channel checks the latest non-prerelease release and applies it automatically after download and SHA256 verification.
-- `dev` channel tracks the fixed `dev` prerelease tag refreshed from `main`/`master`; it downloads and verifies the binary, then waits for confirmation in the WebUI or `POST /api/update/apply`.
+- `dev` channel tracks the fixed `dev` prerelease tag refreshed from `main`/`master`; checks read `version.json` directly from that tag's release download URL, then download and verify the binary before waiting for confirmation in the WebUI or `POST /api/update/apply`.
 - OTA assets are bare binaries named `easy-proxies-linux-amd64` / `easy-proxies-linux-arm64` plus `.sha256`.
+- OTA downloads use GitHub Releases download URLs directly; `proxy_base_url` is kept only for old config compatibility.
 - Manual installation assets remain available as `easy-proxies-linux-amd64.tar.gz` / `easy-proxies-linux-arm64.tar.gz`.
 - Version metadata is injected at build time and exposed via `easy-proxies -version` and `GET /api/version`.
 

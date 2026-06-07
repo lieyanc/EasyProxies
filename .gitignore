@@ -33,6 +33,10 @@ logs/
 # Go
 vendor/
 
+# JavaScript
+node_modules/
+*.tsbuildinfo
+
 # Test artifacts
 coverage.out
 coverage.html

@@ -66,7 +66,7 @@ type UpdateConfig struct {
 	Enabled       bool          `yaml:"enabled" json:"enabled"`
 	Channel       string        `yaml:"channel" json:"channel"`               // stable / dev
 	CheckInterval time.Duration `yaml:"check_interval" json:"check_interval"` // default 1h
-	ProxyBaseURL  string        `yaml:"proxy_base_url" json:"proxy_base_url"` // release metadata/download proxy
+	ProxyBaseURL  string        `yaml:"proxy_base_url" json:"proxy_base_url"` // deprecated compatibility field
 	Repo          string        `yaml:"repo" json:"repo"`                     // GitHub repo, owner/name
 }
 
@@ -598,9 +598,6 @@ func (c *Config) normalizeUpdateConfig() {
 	}
 	if c.Update.CheckInterval <= 0 {
 		c.Update.CheckInterval = time.Hour
-	}
-	if strings.TrimSpace(c.Update.ProxyBaseURL) == "" {
-		c.Update.ProxyBaseURL = "https://dl.repo.chycloud.top"
 	}
 	c.Update.ProxyBaseURL = strings.TrimRight(strings.TrimSpace(c.Update.ProxyBaseURL), "/")
 	c.Update.Repo = strings.TrimSpace(c.Update.Repo)

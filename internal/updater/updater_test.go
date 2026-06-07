@@ -23,7 +23,7 @@ func TestCheckOnlySelectsNewestStableRelease(t *testing.T) {
 	version.Version = "v1.0.0"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/releases/owner/repo/latest" {
+		if r.URL.Path != "/repos/owner/repo/releases/latest" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(releaseInfo{
@@ -32,10 +32,11 @@ func TestCheckOnlySelectsNewestStableRelease(t *testing.T) {
 		})
 	}))
 	defer server.Close()
+	withGitHubAPIBaseURL(t, server.URL)
 
 	u := testUpdater(Config{
 		Channel:      "stable",
-		ProxyBaseURL: server.URL,
+		ProxyBaseURL: "https://proxy.invalid",
 		Repo:         "owner/repo",
 	})
 
@@ -61,35 +62,22 @@ func TestCheckOnlySelectsNewestPrerelease(t *testing.T) {
 	remoteVersion := "dev-0042-20260425-bbbbbbb"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/releases/owner/repo/dev":
-			_ = json.NewEncoder(w).Encode(releaseInfo{
-				TagName:         "dev",
-				TargetCommitish: "bbbbbbb",
-				Prerelease:      true,
-				Assets: []assetInfo{
-					{
-						Name:               "version.json",
-						BrowserDownloadURL: "https://github.com/owner/repo/releases/download/dev/version.json",
-					},
-				},
-			})
-		case "/download/owner/repo/dev/version.json":
-			_ = json.NewEncoder(w).Encode(releaseVersionInfo{
-				Version:   remoteVersion,
-				Commit:    "bbbbbbb",
-				BuildTime: "2026-04-25T00:00:00Z",
-				Tag:       "dev",
-			})
-		default:
+		if r.URL.Path != "/owner/repo/releases/download/dev/version.json" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
+		_ = json.NewEncoder(w).Encode(releaseVersionInfo{
+			Version:   remoteVersion,
+			Commit:    "bbbbbbb",
+			BuildTime: "2026-04-25T00:00:00Z",
+			Tag:       "dev",
+		})
 	}))
 	defer server.Close()
+	withGitHubBaseURL(t, server.URL)
 
 	u := testUpdater(Config{
 		Channel:      "dev",
-		ProxyBaseURL: server.URL,
+		ProxyBaseURL: "https://proxy.invalid",
 		Repo:         "owner/repo",
 	})
 
@@ -133,44 +121,24 @@ func TestPerformUpdateDownloadsAndVerifiesPrerelease(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/releases/owner/repo/dev":
-			_ = json.NewEncoder(w).Encode(releaseInfo{
-				TagName:         tag,
-				TargetCommitish: "bbbbbbb",
-				Prerelease:      true,
-				Assets: []assetInfo{
-					{
-						Name:               targetName,
-						BrowserDownloadURL: "https://github.com/owner/repo/releases/download/" + tag + "/" + targetName,
-						Size:               int64(len(binary)),
-					},
-					{
-						Name:               targetName + ".sha256",
-						BrowserDownloadURL: "https://github.com/owner/repo/releases/download/" + tag + "/" + targetName + ".sha256",
-					},
-					{
-						Name:               "version.json",
-						BrowserDownloadURL: "https://github.com/owner/repo/releases/download/" + tag + "/version.json",
-					},
-				},
-			})
-		case "/download/owner/repo/" + tag + "/" + targetName:
-			_, _ = w.Write(binary)
-		case "/download/owner/repo/" + tag + "/" + targetName + ".sha256":
-			_, _ = w.Write([]byte(sum + "  " + targetName + "\n"))
-		case "/download/owner/repo/" + tag + "/version.json":
+		case "/owner/repo/releases/download/" + tag + "/version.json":
 			_ = json.NewEncoder(w).Encode(releaseVersionInfo{
 				Version:   remoteVersion,
 				Commit:    "bbbbbbb",
 				BuildTime: "2026-04-25T00:00:00Z",
 				Tag:       tag,
 			})
+		case "/owner/repo/releases/download/" + tag + "/" + targetName:
+			_, _ = w.Write(binary)
+		case "/owner/repo/releases/download/" + tag + "/" + targetName + ".sha256":
+			_, _ = w.Write([]byte(sum + "  " + targetName + "\n"))
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 	}))
 	defer server.Close()
-	cfg.ProxyBaseURL = server.URL
+	withGitHubBaseURL(t, server.URL)
+	cfg.ProxyBaseURL = "https://proxy.invalid"
 
 	u.performUpdate(context.Background())
 
@@ -240,4 +208,22 @@ func testUpdater(cfg Config) *Updater {
 		log.New(io.Discard, "", 0),
 		RestartHooks{},
 	)
+}
+
+func withGitHubBaseURL(t *testing.T, baseURL string) {
+	t.Helper()
+	original := githubBaseURL
+	githubBaseURL = baseURL
+	t.Cleanup(func() {
+		githubBaseURL = original
+	})
+}
+
+func withGitHubAPIBaseURL(t *testing.T, baseURL string) {
+	t.Helper()
+	original := githubAPIBaseURL
+	githubAPIBaseURL = baseURL
+	t.Cleanup(func() {
+		githubAPIBaseURL = original
+	})
 }
