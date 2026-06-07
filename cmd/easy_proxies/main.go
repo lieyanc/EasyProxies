@@ -14,14 +14,22 @@ import (
 	"easy_proxies/internal/app"
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/monitor"
+	"easy_proxies/internal/version"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 func main() {
 	var configPath string
+	var showVersion bool
 	flag.StringVar(&configPath, "config", "config.yaml", "path to config file")
+	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Printf("easy_proxies %s (commit=%s, built=%s)\n", version.Version, version.Commit, version.BuildTime)
+		return
+	}
 
 	var cfg *config.Config
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -40,6 +48,7 @@ func main() {
 
 	// Setup logging based on config
 	setupLogging(cfg)
+	log.Printf("Easy Proxies %s (commit=%s, built=%s)", version.Version, version.Commit, version.BuildTime)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

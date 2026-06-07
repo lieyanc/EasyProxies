@@ -5,7 +5,13 @@ COPY go.mod go.sum ./
 ARG GOPROXY=https://proxy.golang.org,direct
 RUN go env -w GOPROXY=${GOPROXY} && go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -tags "with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api" -o easy_proxies ./cmd/easy_proxies
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -trimpath \
+    -tags "with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api" \
+    -ldflags "-s -w -X easy_proxies/internal/version.Version=${VERSION} -X easy_proxies/internal/version.Commit=${COMMIT} -X easy_proxies/internal/version.BuildTime=${BUILD_TIME}" \
+    -o easy_proxies ./cmd/easy_proxies
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \

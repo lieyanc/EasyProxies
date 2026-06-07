@@ -1,0 +1,19 @@
+[Unit]
+Description=Easy Proxies proxy pool
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=easyproxies
+Group=easyproxies
+WorkingDirectory=/etc/easy_proxies
+ExecStart=/usr/local/bin/easy_proxies -config /etc/easy_proxies/config.yaml
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=1048576
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

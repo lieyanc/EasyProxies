@@ -25,32 +25,72 @@ Easy Proxies 是一个基于 sing-box 的代理池管理工具。
 - 新增可配置 DNS 解析器（对 VMess 域名节点非常关键）。
 - 可选 GeoIP 标记（支持 JP/KR/US/HK/TW/SG 地域分区，可在 WebUI 中开关，支持数据库下载代理、自动更新和热重载）。
 - **可配置日志轮转**，支持大小限制、备份数量和压缩。
+- **二进制优先部署**：发布 amd64/arm64 Linux 静态二进制，Docker 作为可选运行方式保留。
 
 ## 快速开始
 
-### 1）准备配置
+### 1）下载二进制（推荐）
+
+根据服务器架构下载发布包：
+
+```bash
+# amd64
+curl -L -o easy-proxies-linux-amd64.tar.gz \
+  https://github.com/lieyanc/EasyProxies/releases/latest/download/easy-proxies-linux-amd64.tar.gz
+
+# arm64
+curl -L -o easy-proxies-linux-arm64.tar.gz \
+  https://github.com/lieyanc/EasyProxies/releases/latest/download/easy-proxies-linux-arm64.tar.gz
+```
+
+安装主程序：
+
+```bash
+tar -xzf easy-proxies-linux-amd64.tar.gz
+sudo install -m755 easy-proxies-*/easy_proxies /usr/local/bin/easy_proxies
+```
+
+### 2）准备配置
+
+```bash
+sudo mkdir -p /etc/easy_proxies
+sudo cp easy-proxies-*/config.example.yaml /etc/easy_proxies/config.yaml
+sudo cp easy-proxies-*/nodes.example /etc/easy_proxies/nodes.txt
+```
+
+编辑 `/etc/easy_proxies/config.yaml`，并配置节点来源（`nodes.txt` / `subscriptions` / `nodes`）。
+
+### 3）启动
+
+直接运行：
+
+```bash
+easy_proxies -config /etc/easy_proxies/config.yaml
+```
+
+也可以安装发布包里的 systemd 服务：
+
+```bash
+sudo install -Dm644 easy-proxies-*/easy_proxies.service /etc/systemd/system/easy_proxies.service
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin easyproxies 2>/dev/null || true
+sudo chown -R easyproxies:easyproxies /etc/easy_proxies
+sudo systemctl daemon-reload
+sudo systemctl enable --now easy_proxies
+```
+
+### 4）从源码构建
 
 ```bash
 cp config.example.yaml config.yaml
 cp nodes.example nodes.txt
+make build
+./easy_proxies -config config.yaml
 ```
 
-编辑 `config.yaml`，并配置节点来源（`nodes.txt` / `subscriptions` / `nodes`）。
-
-### 2）启动
-
-Docker：
+源码目录下的 `start.sh` 会优先使用本地二进制；不存在时自动构建：
 
 ```bash
 ./start.sh
-# 或
-docker compose up -d
-```
-
-本地运行：
-
-```bash
-go run ./cmd/easy_proxies -config config.yaml
 ```
 
 ## 最小配置示例（Pool）
@@ -151,8 +191,90 @@ dns:
 - `GET|POST /api/subscription/status|refresh`
 - `GET|POST|PUT|DELETE /api/nodes/config[...]`
 - `POST /api/reload`
+- `GET /api/version`
+- `GET /api/update/status`
+- `POST /api/update/check`
+- `POST /api/update/apply`
+- `POST /api/update/dismiss`
 
 `management.password` 为空时，Web/API 不要求登录，但仅允许监听本机地址；绑定公网或局域网地址时必须设置密码。
+
+## 二进制部署说明
+
+发布包只包含服务器运行需要的文件：
+
+- `easy_proxies`：静态链接的 Linux 主程序。
+- `config.example.yaml`：完整配置示例。
+- `nodes.example`：节点文件示例。
+- `easy_proxies.service`：可选 systemd 服务。
+- `README.md` / `README_ZH.md`：部署和使用说明。
+
+WebUI 已通过 Go `embed` 内嵌进二进制，sing-box 也作为 Go 依赖链接进主程序，不需要额外安装 sing-box 进程。
+
+常用构建和安装命令：
+
+```bash
+make build          # 构建当前平台 ./easy_proxies
+make package        # 在 dist/ 生成 OTA 二进制、sha256 和安装包
+make install        # 安装主程序和默认配置
+make install-systemd
+```
+
+常见运行文件：
+
+| 路径 | 用途 |
+|------|------|
+| `/usr/local/bin/easy_proxies` | 安装后的主程序 |
+| `/etc/easy_proxies/config.yaml` | 主配置文件 |
+| `/etc/easy_proxies/nodes.txt` | 使用 `nodes_file` 时的节点列表/缓存 |
+| `/etc/systemd/system/easy_proxies.service` | 可选 systemd 服务 |
+
+## OTA 与 CI
+
+在 `config.yaml` 或 WebUI 设置页中启用 `update.enabled` 后，Easy Proxies 可以从 GitHub Releases 自更新。
+
+- `stable` 通道检查最新正式版，下载并校验 SHA256 后自动应用。
+- `dev` 通道跟踪固定的 `dev` 预发布 tag；CI 每次从 `main`/`master` 刷新该 release，程序下载校验后等待 WebUI 或 `POST /api/update/apply` 确认。
+- OTA 使用裸二进制资产：`easy-proxies-linux-amd64` / `easy-proxies-linux-arm64`，并要求同时存在 `.sha256`。
+- 人工安装继续使用 `easy-proxies-linux-amd64.tar.gz` / `easy-proxies-linux-arm64.tar.gz`。
+- 构建时会注入版本信息，可通过 `easy_proxies -version` 和 `GET /api/version` 查看。
+
+CI 工作流 [`.github/workflows/release.yml`](.github/workflows/release.yml) 会运行测试、交叉编译 Linux amd64/arm64、在推送 `main`/`master` 时刷新 `dev` 预发布、在推送 `v*` tag 时发布正式版，并继续构建 Docker 镜像。
+
+正式版发布示例：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+使用 GitHub CLI 拉取最新构建：
+
+```bash
+./scripts/fetch-latest-build.sh --download-only
+./scripts/fetch-latest-build.sh --stable --download-only
+```
+
+端口：
+
+| 端口 | 用途 |
+|------|------|
+| 2323 | Pool/Hybrid 模式的代理池入口 |
+| 9091 | WebUI 和管理 API |
+| 1221 | GeoIP 地域路由入口（启用时，可配置） |
+| 24000+ | Multi-port 模式，每个节点一个端口 |
+
+## Docker 部署（可选）
+
+Docker 仍然可用，适合希望用容器管理生命周期的场景：
+
+```bash
+./docker-start.sh
+# 或
+docker compose up -d
+```
+
+Docker 模式下默认使用 host 网络，并把配置目录挂载到 `./data`。首次启动时容器入口会自动生成 `config.yaml` 和 `nodes.txt`。
 
 ## 重要运行说明
 
@@ -168,7 +290,7 @@ dns:
 ## 开发验证
 
 ```bash
-go test ./...
+make test
 ```
 
 ## Star History

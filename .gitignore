@@ -36,6 +36,8 @@ vendor/
 # Test artifacts
 coverage.out
 coverage.html
+dist/
+.bin/
 
 # Qodo
 .qodo/

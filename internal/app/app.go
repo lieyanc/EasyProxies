@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/monitor"
 	"easy_proxies/internal/subscription"
+	"easy_proxies/internal/updater"
 )
 
 // Run builds the runtime components from config and blocks until shutdown.
@@ -60,6 +63,34 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		server.SetSubscriptionRefresher(subMgr)
 	}
 
+	var updateShutdownOnce sync.Once
+	updateShutdown := func(tag string) error {
+		var closeErr error
+		updateShutdownOnce.Do(func() {
+			fmt.Printf("Preparing OTA restart for %s...\n", tag)
+			if subMgr != nil {
+				subMgr.Stop()
+			}
+			closeErr = boxMgr.Close()
+		})
+		return closeErr
+	}
+	upd := updater.New(
+		func() updater.Config { return updaterConfig(cfg.Update) },
+		func() string { return cfg.ConfigDir() },
+		log.Default(),
+		updater.RestartHooks{
+			BeforeExec: updateShutdown,
+			OnExecFailure: func(err error) {
+				log.Printf("update: restart failed: %v", err)
+			},
+		},
+	)
+	if server := boxMgr.MonitorServer(); server != nil {
+		server.SetUpdater(upd)
+	}
+	upd.StartBackground(ctx)
+
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -97,4 +128,14 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+func updaterConfig(cfg config.UpdateConfig) updater.Config {
+	return updater.Config{
+		Enabled:       cfg.Enabled,
+		Channel:       cfg.Channel,
+		CheckInterval: cfg.CheckInterval,
+		ProxyBaseURL:  cfg.ProxyBaseURL,
+		Repo:          cfg.Repo,
+	}
 }

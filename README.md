@@ -16,48 +16,75 @@
 - **Management API**: RESTful endpoints for node CRUD, probing, blacklisting, subscription management, and config reload
 - **Configurable DNS resolver** with fallback servers and IPv4/IPv6 strategy control
 - **Log rotation**: size-based rotation with configurable backup count, age, and compression
-- **Multi-platform Docker**: supports amd64 and arm64 with host networking
+- **Binary-first deployment**: static Linux binaries for amd64 and arm64; Docker remains available as an optional wrapper
 
 ## Quick Start
 
-### 1. Prepare Configuration
+### 1. Download a Binary (Recommended)
+
+Download the release archive for your server architecture:
+
+```bash
+# amd64
+curl -L -o easy-proxies-linux-amd64.tar.gz \
+  https://github.com/lieyanc/EasyProxies/releases/latest/download/easy-proxies-linux-amd64.tar.gz
+
+# arm64
+curl -L -o easy-proxies-linux-arm64.tar.gz \
+  https://github.com/lieyanc/EasyProxies/releases/latest/download/easy-proxies-linux-arm64.tar.gz
+```
+
+Install the binary:
+
+```bash
+tar -xzf easy-proxies-linux-amd64.tar.gz
+sudo install -m755 easy-proxies-*/easy_proxies /usr/local/bin/easy_proxies
+```
+
+### 2. Prepare Configuration
+
+```bash
+sudo mkdir -p /etc/easy_proxies
+sudo cp easy-proxies-*/config.example.yaml /etc/easy_proxies/config.yaml
+sudo cp easy-proxies-*/nodes.example /etc/easy_proxies/nodes.txt
+```
+
+Edit `/etc/easy_proxies/config.yaml` and add your proxy nodes (inline nodes, `nodes.txt` file, or subscription URLs).
+
+### 3. Start the Service
+
+Run directly:
+
+```bash
+easy_proxies -config /etc/easy_proxies/config.yaml
+```
+
+Or install the packaged systemd unit:
+
+```bash
+sudo install -Dm644 easy-proxies-*/easy_proxies.service /etc/systemd/system/easy_proxies.service
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin easyproxies 2>/dev/null || true
+sudo chown -R easyproxies:easyproxies /etc/easy_proxies
+sudo systemctl daemon-reload
+sudo systemctl enable --now easy_proxies
+```
+
+### 4. Build from Source
 
 ```bash
 cp config.example.yaml config.yaml
-touch nodes.txt
+cp nodes.example nodes.txt
+make build
+./easy_proxies -config config.yaml
 ```
 
-Edit `config.yaml` and add your proxy nodes (inline nodes, `nodes.txt` file, or subscription URLs).
+The helper script does the same local-first setup and builds the binary if needed:
 
-> **Important**: `config.yaml` and `nodes.txt` MUST exist as files before starting the Docker container. If they don't exist, Docker will create them as directories, causing startup failure. Use `start.sh` to avoid this issue.
-
-### 2. Run with Docker (Recommended)
-
-Zero-config: config files are auto-generated on first run.
-
-```bash
-mkdir -p data logs
-docker run --user $(id -u):$(id -g) \
-  -v $(pwd)/data:/etc/easy_proxies \
-  -v $(pwd)/logs:/app/logs \
-  --network host \
-  ghcr.io/lieyanc/easy-proxies:latest
-```
-
-Or use docker compose:
 ```bash
 ./start.sh
-# or manually:
-docker compose up -d
 ```
 
-### 3. Run from Source
-
-```bash
-go run ./cmd/easy_proxies --config config.yaml
-```
-
-### 4. Access WebUI
+### 5. Access WebUI
 
 Open `http://localhost:9091` in your browser.
 
@@ -325,12 +352,80 @@ When `management.password` is empty, authentication is bypassed, but the managem
 | `/api/subscription/refresh` | POST | Trigger manual refresh |
 | `/api/nodes/config` | GET, POST, PUT, DELETE | CRUD for node config |
 | `/api/reload` | POST | Reload sing-box instance |
+| `/api/version` | GET | Runtime version metadata |
+| `/api/update/status` | GET | OTA update status |
+| `/api/update/check` | POST | Check for updates |
+| `/api/update/apply` | POST | Download/apply or confirm an update |
+| `/api/update/dismiss` | POST | Dismiss a pending dev update |
 
-## Docker Deployment
+## Binary Deployment
 
-### docker-compose.yml
+Release archives contain only the runtime pieces needed on a server:
 
-The default setup uses host networking (recommended for automatic port management). Config directory is auto-generated on first run:
+- `easy_proxies`: statically linked Linux binary
+- `config.example.yaml`: full documented configuration
+- `nodes.example`: example node list
+- `easy_proxies.service`: optional systemd unit
+- `README.md` / `README_ZH.md`: deployment and usage notes
+
+The WebUI is embedded into the binary with Go `embed`, and sing-box is linked as a Go dependency. There is no separate sing-box process to install.
+
+### Build Targets
+
+```bash
+make build          # build ./easy_proxies for the local platform
+make package        # create OTA binary + sha256 + install archive under dist/
+make install        # install binary and default config under /usr/local and /etc
+make install-systemd
+```
+
+### Runtime Files
+
+| Path | Purpose |
+|------|---------|
+| `/usr/local/bin/easy_proxies` | Installed binary |
+| `/etc/easy_proxies/config.yaml` | Main configuration |
+| `/etc/easy_proxies/nodes.txt` | Node cache/list when `nodes_file` is used |
+| `/etc/systemd/system/easy_proxies.service` | Optional systemd unit |
+
+## OTA And CI
+
+Easy Proxies can self-update from GitHub Releases when `update.enabled` is enabled in `config.yaml` or the WebUI settings page.
+
+- `stable` channel checks the latest non-prerelease release and applies it automatically after download and SHA256 verification.
+- `dev` channel tracks the fixed `dev` prerelease tag refreshed from `main`/`master`; it downloads and verifies the binary, then waits for confirmation in the WebUI or `POST /api/update/apply`.
+- OTA assets are bare binaries named `easy-proxies-linux-amd64` / `easy-proxies-linux-arm64` plus `.sha256`.
+- Manual installation assets remain available as `easy-proxies-linux-amd64.tar.gz` / `easy-proxies-linux-arm64.tar.gz`.
+- Version metadata is injected at build time and exposed via `easy_proxies -version` and `GET /api/version`.
+
+The workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) runs tests, cross-compiles Linux amd64/arm64 binaries, publishes the fixed `dev` prerelease on pushes to `main`/`master`, publishes stable releases on `v*` tags, and still builds the Docker image.
+
+Stable release example:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Fetch the latest release asset with GitHub CLI:
+
+```bash
+./scripts/fetch-latest-build.sh --download-only
+./scripts/fetch-latest-build.sh --stable --download-only
+```
+
+### Ports
+
+| Port | Usage |
+|------|-------|
+| 2323 | Pool proxy entry (pool/hybrid mode) |
+| 9091 | WebUI and Management API |
+| 1221 | GeoIP region router (when enabled, configurable) |
+| 24000+ | Multi-port mode (one per node) |
+
+## Docker Deployment (Optional)
+
+Docker remains supported when you prefer container lifecycle management. The compose setup uses host networking for automatic port management, and the container entrypoint can generate config files on first run:
 
 ```yaml
 services:
@@ -345,21 +440,20 @@ services:
       - ./logs:/app/logs
 ```
 
-### Important Notes
+Run it with:
+
+```bash
+./docker-start.sh
+# or manually:
+docker compose up -d
+```
+
+### Docker Notes
 
 - **Zero-config**: When mapping a directory, `config.yaml` and `nodes.txt` are auto-generated on first run.
 - **Permissions**: Use `--user $(id -u):$(id -g)` to match your host user for file access.
 - **Multi-platform**: Supports amd64 and arm64 architectures.
 - **Reload**: `/api/reload` and subscription refresh will interrupt active connections.
-
-### Ports
-
-| Port | Usage |
-|------|-------|
-| 2323 | Pool proxy entry (pool/hybrid mode) |
-| 9091 | WebUI and Management API |
-| 1221 | GeoIP region router (when enabled, configurable) |
-| 24000+ | Multi-port mode (one per node) |
 
 ## Changelog
 
@@ -368,7 +462,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ## Development
 
 ```bash
-go test ./...
+make test
 ```
 
 ## Star History

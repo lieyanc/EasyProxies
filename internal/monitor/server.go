@@ -20,6 +20,8 @@ import (
 
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
+	"easy_proxies/internal/updater"
+	"easy_proxies/internal/version"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -87,6 +89,7 @@ type Server struct {
 
 	subRefresher SubscriptionRefresher
 	nodeMgr      NodeManager
+	updater      *updater.Updater
 }
 
 // NewServer constructs a server; it can be nil when disabled.
@@ -131,6 +134,11 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
 	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
 	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
+	mux.HandleFunc("/api/version", s.withAuth(s.handleVersion))
+	mux.HandleFunc("/api/update/status", s.withAuth(s.handleUpdateStatus))
+	mux.HandleFunc("/api/update/check", s.withAuth(s.handleUpdateCheck))
+	mux.HandleFunc("/api/update/apply", s.withAuth(s.handleUpdateApply))
+	mux.HandleFunc("/api/update/dismiss", s.withAuth(s.handleUpdateDismiss))
 	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
 	s.srv = &http.Server{
@@ -153,6 +161,13 @@ func (s *Server) SetSubscriptionRefresher(sr SubscriptionRefresher) {
 func (s *Server) SetNodeManager(nm NodeManager) {
 	if s != nil {
 		s.nodeMgr = nm
+	}
+}
+
+// SetUpdater enables OTA update endpoints.
+func (s *Server) SetUpdater(u *updater.Updater) {
+	if s != nil {
+		s.updater = u
 	}
 }
 
@@ -797,6 +812,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"auto_update_interval": "",
 				"download_proxies":     []string{},
 			},
+			"update": map[string]any{
+				"enabled":        false,
+				"channel":        "stable",
+				"check_interval": "1h",
+				"proxy_base_url": "https://dl.repo.chycloud.top",
+				"repo":           "lieyanc/EasyProxies",
+			},
 		}
 		if cfg != nil {
 			resp["mode"] = cfg.Mode
@@ -829,6 +851,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"auto_update_enabled":  cfg.GeoIP.AutoUpdateEnabled,
 				"auto_update_interval": cfg.GeoIP.AutoUpdateInterval.String(),
 				"download_proxies":     cfg.GeoIP.DownloadProxies,
+			}
+			resp["update"] = map[string]any{
+				"enabled":        cfg.Update.Enabled,
+				"channel":        cfg.Update.Channel,
+				"check_interval": cfg.Update.CheckInterval.String(),
+				"proxy_base_url": cfg.Update.ProxyBaseURL,
+				"repo":           cfg.Update.Repo,
 			}
 		}
 		writeJSON(w, resp)
@@ -875,6 +904,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				AutoUpdateInterval string   `json:"auto_update_interval"`
 				DownloadProxies    []string `json:"download_proxies"`
 			} `json:"geoip"`
+			Update *struct {
+				Enabled       bool   `json:"enabled"`
+				Channel       string `json:"channel"`
+				CheckInterval string `json:"check_interval"`
+				ProxyBaseURL  string `json:"proxy_base_url"`
+				Repo          string `json:"repo"`
+			} `json:"update"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -968,6 +1004,32 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				nextCfg.GeoIP.AutoUpdateInterval = 24 * time.Hour
 			}
 		}
+		if req.Update != nil {
+			nextCfg.Update.Enabled = req.Update.Enabled
+			nextCfg.Update.Channel = strings.ToLower(strings.TrimSpace(req.Update.Channel))
+			if nextCfg.Update.Channel == "" {
+				nextCfg.Update.Channel = "stable"
+			}
+			if nextCfg.Update.Channel != "stable" {
+				nextCfg.Update.Channel = "dev"
+			}
+			if req.Update.CheckInterval != "" {
+				if d, err := time.ParseDuration(req.Update.CheckInterval); err == nil && d > 0 {
+					nextCfg.Update.CheckInterval = d
+				}
+			}
+			nextCfg.Update.ProxyBaseURL = strings.TrimRight(strings.TrimSpace(req.Update.ProxyBaseURL), "/")
+			nextCfg.Update.Repo = strings.TrimSpace(req.Update.Repo)
+			if nextCfg.Update.CheckInterval <= 0 {
+				nextCfg.Update.CheckInterval = time.Hour
+			}
+			if nextCfg.Update.ProxyBaseURL == "" {
+				nextCfg.Update.ProxyBaseURL = "https://dl.repo.chycloud.top"
+			}
+			if nextCfg.Update.Repo == "" {
+				nextCfg.Update.Repo = "lieyanc/EasyProxies"
+			}
+		}
 
 		if err := nextCfg.ValidateManagementSecurity(); err != nil {
 			s.cfgMu.Unlock()
@@ -996,6 +1058,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfg.ProxyPassword = nextCfg.Listener.Password
 		}
 		s.cfgMu.Unlock()
+		if req.Update != nil && nextCfg.Update.Enabled && s.updater != nil {
+			s.updater.StartBackground(context.Background())
+		}
 
 		writeJSON(w, map[string]any{
 			"message":          "设置已保存",
@@ -1007,6 +1072,101 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	info := version.Info()
+	s.cfgMu.RLock()
+	if s.cfgSrc != nil {
+		info["update_channel"] = s.cfgSrc.Update.Channel
+		info["update_repo"] = s.cfgSrc.Update.Repo
+	}
+	s.cfgMu.RUnlock()
+	writeJSON(w, map[string]any{"version": info})
+}
+
+func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.updater == nil {
+		writeJSON(w, map[string]any{"enabled": false, "message": "OTA 更新未启用"})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"enabled": true,
+		"status":  s.updater.Status(),
+	})
+}
+
+func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.updater == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSON(w, map[string]any{"error": "OTA 更新未启用"})
+		return
+	}
+	result, err := s.updater.CheckOnly(r.Context())
+	if err != nil {
+		writeJSON(w, map[string]any{
+			"ok":     false,
+			"result": result,
+			"error":  err.Error(),
+		})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "result": result})
+}
+
+func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.updater == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSON(w, map[string]any{"error": "OTA 更新未启用"})
+		return
+	}
+	status := s.updater.Status()
+	if status.State == "ready" {
+		if err := s.updater.ApplyPending(r.Context()); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "status": "applying"})
+		return
+	}
+	if status.State == "checking" || status.State == "downloading" || status.State == "applying" {
+		w.WriteHeader(http.StatusConflict)
+		writeJSON(w, map[string]any{"error": "更新已在进行中"})
+		return
+	}
+	s.updater.StartUpdate(r.Context())
+	writeJSON(w, map[string]any{"ok": true, "status": "update_started"})
+}
+
+func (s *Server) handleUpdateDismiss(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.updater == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSON(w, map[string]any{"error": "OTA 更新未启用"})
+		return
+	}
+	s.updater.DismissPending()
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // handleSubscriptionStatus returns the current subscription refresh status.

@@ -764,6 +764,43 @@
             </div>
 
             <div class="panel" style="margin-bottom: 16px;">
+              <div class="panel-header">
+                <div class="panel-title">系统更新 (OTA)</div>
+                <div style="display:flex; gap:8px;">
+                  <button type="button" class="btn btn-sm" onclick="checkUpdateNow()">检查更新</button>
+                  <button type="button" class="btn btn-sm btn-primary" onclick="applyUpdateNow()">下载/应用</button>
+                  <button type="button" class="btn btn-sm" onclick="dismissUpdate()">忽略</button>
+                </div>
+              </div>
+              <div style="padding: 16px;">
+                <div class="checkbox-grid">
+                  <div class="checkbox-row"><input type="checkbox" id="settingUpdateEnabled" /><label for="settingUpdateEnabled">启用后台更新检查</label></div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                  <div class="form-group">
+                    <label>更新通道</label>
+                    <select id="settingUpdateChannel" class="setting-input">
+                      <option value="stable">stable - 正式版自动应用</option>
+                      <option value="dev">dev - 开发版确认后应用</option>
+                    </select>
+                  </div>
+                  <div class="form-group"><label>检查间隔</label><input type="text" id="settingUpdateInterval" class="setting-input" placeholder="1h" /></div>
+                  <div class="form-group"><label>Release 代理</label><input type="text" id="settingUpdateProxy" class="setting-input" placeholder="https://dl.repo.chycloud.top" /></div>
+                  <div class="form-group"><label>GitHub 仓库</label><input type="text" id="settingUpdateRepo" class="setting-input" placeholder="lieyanc/EasyProxies" /></div>
+                </div>
+                <div style="margin-top:12px; display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                  <div class="stat-panel" style="padding:12px;"><div class="stat-title">当前版本</div><div class="stat-sub" id="updateCurrentVersion">dev</div></div>
+                  <div class="stat-panel" style="padding:12px;"><div class="stat-title">最新版本</div><div class="stat-sub" id="updateLatestVersion">-</div></div>
+                  <div class="stat-panel" style="padding:12px;"><div class="stat-title">更新状态</div><div class="stat-sub" id="updateState">idle</div></div>
+                </div>
+                <div style="margin-top:12px;">
+                  <div class="progress-bar"><div class="progress-fill" id="updateProgressFill" style="width:0%"></div></div>
+                  <div id="updateMessage" style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">Release 资产需包含 easy-proxies-&lt;os&gt;-&lt;arch&gt; 与 .sha256</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel" style="margin-bottom: 16px;">
               <div class="panel-header"><div class="panel-title">订阅配置</div></div>
               <div style="padding: 16px;">
                 <div class="checkbox-grid">
@@ -1486,6 +1523,14 @@
         document.getElementById('settingLogMaxAge').value = logCfg.max_age || 7;
         document.getElementById('settingLogCompress').checked = logCfg.compress || false;
         toggleLogFileSettings();
+        // OTA
+        const updateCfg = d.update || {};
+        document.getElementById('settingUpdateEnabled').checked = updateCfg.enabled || false;
+        document.getElementById('settingUpdateChannel').value = updateCfg.channel || 'stable';
+        document.getElementById('settingUpdateInterval').value = updateCfg.check_interval || '1h';
+        document.getElementById('settingUpdateProxy').value = updateCfg.proxy_base_url || 'https://dl.repo.chycloud.top';
+        document.getElementById('settingUpdateRepo').value = updateCfg.repo || 'lieyanc/EasyProxies';
+        loadUpdateStatus();
         // Subscription
         try {
           const sr = await fetch('/api/subscription/config'); const sd = await sr.json();
@@ -1533,6 +1578,11 @@
         log_max_backups: document.getElementById('settingLogMaxBackups').value,
         log_max_age: document.getElementById('settingLogMaxAge').value,
         log_compress: document.getElementById('settingLogCompress').checked,
+        update_enabled: document.getElementById('settingUpdateEnabled').checked,
+        update_channel: document.getElementById('settingUpdateChannel').value,
+        update_interval: document.getElementById('settingUpdateInterval').value,
+        update_proxy: document.getElementById('settingUpdateProxy').value,
+        update_repo: document.getElementById('settingUpdateRepo').value,
       });
     }
     function toggleLogFileSettings() {
@@ -1603,6 +1653,13 @@
             auto_update_enabled: document.getElementById('settingGeoIPAutoUpdate').checked,
             auto_update_interval: document.getElementById('settingGeoIPUpdateInterval').value || '24h',
             download_proxies: document.getElementById('settingGeoIPDownloadProxies').value.split('\n').map(s => s.trim()).filter(s => s),
+          },
+          update: {
+            enabled: document.getElementById('settingUpdateEnabled').checked,
+            channel: document.getElementById('settingUpdateChannel').value,
+            check_interval: document.getElementById('settingUpdateInterval').value || '1h',
+            proxy_base_url: document.getElementById('settingUpdateProxy').value,
+            repo: document.getElementById('settingUpdateRepo').value,
           }
         };
         try {
@@ -1641,6 +1698,83 @@
       }
       saveBtn.disabled = false; saveBtn.textContent = originalText; saveBtn.style.opacity = '1';
       refresh();
+    }
+
+    async function loadUpdateStatus() {
+      try {
+        const [versionRes, statusRes] = await Promise.all([
+          fetch('/api/version'),
+          fetch('/api/update/status')
+        ]);
+        if (versionRes.ok) {
+          const v = await versionRes.json();
+          const info = v.version || {};
+          document.getElementById('updateCurrentVersion').textContent = info.version || 'dev';
+        }
+        if (statusRes.ok) {
+          const d = await statusRes.json();
+          const s = d.status || {};
+          const state = s.state || (d.enabled ? 'idle' : 'disabled');
+          const latest = s.latest_version || '-';
+          const progress = Math.max(0, Math.min(100, s.progress || 0));
+          document.getElementById('updateState').textContent = state;
+          document.getElementById('updateLatestVersion').textContent = latest;
+          document.getElementById('updateProgressFill').style.width = progress + '%';
+          document.getElementById('updateMessage').textContent = s.error || s.release_notes || (s.last_check ? ('上次检查: ' + s.last_check) : 'Release 资产需包含 easy-proxies-<os>-<arch> 与 .sha256');
+          if (['checking','downloading','applying'].includes(state) && document.getElementById('settingsTab').classList.contains('active')) {
+            setTimeout(loadUpdateStatus, 1500);
+          }
+        }
+      } catch(e) {
+        document.getElementById('updateMessage').textContent = '更新状态读取失败';
+      }
+    }
+
+    async function checkUpdateNow() {
+      try {
+        document.getElementById('updateMessage').textContent = '正在检查更新...';
+        const r = await fetch('/api/update/check', {method:'POST'});
+        const d = await r.json();
+        if (!r.ok || d.ok === false) {
+          showToast(d.error || '检查失败', 'error');
+        } else if (d.result && d.result.has_update) {
+          showToast('发现新版本 ' + (d.result.latest_version || ''));
+        } else {
+          showToast('当前已是最新版本');
+        }
+        loadUpdateStatus();
+      } catch(e) {
+        showToast('检查失败', 'error');
+      }
+    }
+
+    async function applyUpdateNow() {
+      try {
+        showFullscreenLoading('系统更新中...', '下载、校验并准备重启服务');
+        const r = await fetch('/api/update/apply', {method:'POST'});
+        const d = await r.json().catch(()=>({}));
+        hideFullscreenLoading();
+        if (!r.ok) {
+          showToast(d.error || '更新启动失败', 'error');
+          return;
+        }
+        showToast(d.status === 'applying' ? '正在应用更新' : '更新任务已启动');
+        loadUpdateStatus();
+      } catch(e) {
+        hideFullscreenLoading();
+        showToast('更新启动失败', 'error');
+      }
+    }
+
+    async function dismissUpdate() {
+      try {
+        const r = await fetch('/api/update/dismiss', {method:'POST'});
+        if (!r.ok) { showToast('忽略失败', 'error'); return; }
+        showToast('已忽略待应用更新');
+        loadUpdateStatus();
+      } catch(e) {
+        showToast('忽略失败', 'error');
+      }
     }
 
     let logPollInterval = null;

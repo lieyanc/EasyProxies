@@ -28,6 +28,7 @@ type Config struct {
 	Management          ManagementConfig          `yaml:"management"`
 	SubscriptionRefresh SubscriptionRefreshConfig `yaml:"subscription_refresh"`
 	GeoIP               GeoIPConfig               `yaml:"geoip"`
+	Update              UpdateConfig              `yaml:"update"`
 	Log                 LogConfig                 `yaml:"log"`
 	Nodes               []NodeConfig              `yaml:"nodes"`
 	NodesFile           string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
@@ -58,6 +59,15 @@ type GeoIPConfig struct {
 	AutoUpdateEnabled  bool          `yaml:"auto_update_enabled"`  // 是否启用自动更新数据库
 	AutoUpdateInterval time.Duration `yaml:"auto_update_interval"` // 自动更新间隔，默认 24 小时
 	DownloadProxies    []string      `yaml:"download_proxies,omitempty"`
+}
+
+// UpdateConfig controls OTA update checks and release downloads.
+type UpdateConfig struct {
+	Enabled       bool          `yaml:"enabled" json:"enabled"`
+	Channel       string        `yaml:"channel" json:"channel"`               // stable / dev
+	CheckInterval time.Duration `yaml:"check_interval" json:"check_interval"` // default 1h
+	ProxyBaseURL  string        `yaml:"proxy_base_url" json:"proxy_base_url"` // release metadata/download proxy
+	Repo          string        `yaml:"repo" json:"repo"`                     // GitHub repo, owner/name
 }
 
 // ListenerConfig defines how the HTTP/SOCKS5 mixed proxy should listen for clients.
@@ -282,6 +292,7 @@ func (c *Config) normalize() error {
 	}
 
 	c.GeoIP.DownloadProxies = cleanStringList(c.GeoIP.DownloadProxies)
+	c.normalizeUpdateConfig()
 
 	// Mark inline nodes with source
 	for idx := range c.Nodes {
@@ -500,6 +511,7 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
 	}
 	c.GeoIP.DownloadProxies = cleanStringList(c.GeoIP.DownloadProxies)
+	c.normalizeUpdateConfig()
 
 	if len(c.Nodes) == 0 {
 		return errors.New("config.nodes cannot be empty")
@@ -576,6 +588,27 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	return nil
 }
 
+func (c *Config) normalizeUpdateConfig() {
+	c.Update.Channel = strings.ToLower(strings.TrimSpace(c.Update.Channel))
+	if c.Update.Channel == "" {
+		c.Update.Channel = "stable"
+	}
+	if c.Update.Channel != "stable" {
+		c.Update.Channel = "dev"
+	}
+	if c.Update.CheckInterval <= 0 {
+		c.Update.CheckInterval = time.Hour
+	}
+	if strings.TrimSpace(c.Update.ProxyBaseURL) == "" {
+		c.Update.ProxyBaseURL = "https://dl.repo.chycloud.top"
+	}
+	c.Update.ProxyBaseURL = strings.TrimRight(strings.TrimSpace(c.Update.ProxyBaseURL), "/")
+	c.Update.Repo = strings.TrimSpace(c.Update.Repo)
+	if c.Update.Repo == "" {
+		c.Update.Repo = "lieyanc/EasyProxies"
+	}
+}
+
 func cleanStringList(values []string) []string {
 	if len(values) == 0 {
 		return nil
@@ -647,6 +680,14 @@ func (c *Config) ManagementEnabled() bool {
 		return true
 	}
 	return *c.Management.Enabled
+}
+
+// ConfigDir returns the directory containing the loaded config file.
+func (c *Config) ConfigDir() string {
+	if c == nil || c.filePath == "" {
+		return "."
+	}
+	return filepath.Dir(c.filePath)
 }
 
 // loadNodesFromFile reads a nodes file where each line is a proxy URI
@@ -1303,6 +1344,7 @@ func (c *Config) SaveSettings() error {
 	saveCfg.Subscriptions = c.Subscriptions
 	saveCfg.SubscriptionRefresh = c.SubscriptionRefresh
 	saveCfg.GeoIP = c.GeoIP
+	saveCfg.Update = c.Update
 	saveCfg.Mode = c.Mode
 	saveCfg.Listener = c.Listener
 	saveCfg.MultiPort = c.MultiPort
