@@ -1,8 +1,8 @@
-# Easy Proxies
+# easy-proxies
 
 [English](README.md) | 简体中文
 
-Easy Proxies 是一个基于 sing-box 的代理池管理工具。
+easy-proxies 是一个基于 sing-box 的代理池管理工具。
 
 目标是把大量上游节点统一成稳定的本地 HTTP/SOCKS5 代理入口，同时支持按节点独立端口访问。
 
@@ -36,46 +36,43 @@ Easy Proxies 是一个基于 sing-box 的代理池管理工具。
 ```bash
 # amd64
 curl -L -o easy-proxies-linux-amd64.tar.gz \
-  https://github.com/lieyanc/EasyProxies/releases/latest/download/easy-proxies-linux-amd64.tar.gz
+  https://github.com/lieyanc/easy-proxies/releases/latest/download/easy-proxies-linux-amd64.tar.gz
 
 # arm64
 curl -L -o easy-proxies-linux-arm64.tar.gz \
-  https://github.com/lieyanc/EasyProxies/releases/latest/download/easy-proxies-linux-arm64.tar.gz
+  https://github.com/lieyanc/easy-proxies/releases/latest/download/easy-proxies-linux-arm64.tar.gz
 ```
 
-安装主程序：
+解压发布包。发布目录里已经把 `easy-proxies`、`config.yaml`、`nodes.txt` 放在同一目录：
 
 ```bash
 tar -xzf easy-proxies-linux-amd64.tar.gz
-sudo install -m755 easy-proxies-*/easy_proxies /usr/local/bin/easy_proxies
+cd easy-proxies-*-linux-amd64
 ```
 
 ### 2）准备配置
 
-```bash
-sudo mkdir -p /etc/easy_proxies
-sudo cp easy-proxies-*/config.example.yaml /etc/easy_proxies/config.yaml
-sudo cp easy-proxies-*/nodes.example /etc/easy_proxies/nodes.txt
-```
-
-编辑 `/etc/easy_proxies/config.yaml`，并配置节点来源（`nodes.txt` / `subscriptions` / `nodes`）。
+编辑当前目录的 `config.yaml`，并配置节点来源（`nodes.txt` / `subscriptions` / `nodes`）。
 
 ### 3）启动
 
 直接运行：
 
 ```bash
-easy_proxies -config /etc/easy_proxies/config.yaml
+./easy-proxies
 ```
 
 也可以安装发布包里的 systemd 服务：
 
 ```bash
-sudo install -Dm644 easy-proxies-*/easy_proxies.service /etc/systemd/system/easy_proxies.service
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin easyproxies 2>/dev/null || true
-sudo chown -R easyproxies:easyproxies /etc/easy_proxies
+cd ..
+sudo mkdir -p /opt/easy-proxies
+sudo cp -a easy-proxies-*-linux-amd64/. /opt/easy-proxies/
+sudo install -Dm644 /opt/easy-proxies/easy-proxies.service /etc/systemd/system/easy-proxies.service
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin easy-proxies 2>/dev/null || true
+sudo chown -R easy-proxies:easy-proxies /opt/easy-proxies
 sudo systemctl daemon-reload
-sudo systemctl enable --now easy_proxies
+sudo systemctl enable --now easy-proxies
 ```
 
 ### 4）从源码构建
@@ -84,7 +81,7 @@ sudo systemctl enable --now easy_proxies
 cp config.example.yaml config.yaml
 cp nodes.example nodes.txt
 make build
-./easy_proxies -config config.yaml
+./easy-proxies -config config.yaml
 ```
 
 源码目录下的 `start.sh` 会优先使用本地二进制；不存在时自动构建：
@@ -203,10 +200,12 @@ dns:
 
 发布包只包含服务器运行需要的文件：
 
-- `easy_proxies`：静态链接的 Linux 主程序。
+- `easy-proxies`：静态链接的 Linux 主程序。
+- `config.yaml`：与主程序同目录的运行配置。
+- `nodes.txt`：与主程序同目录的节点列表/缓存。
 - `config.example.yaml`：完整配置示例。
 - `nodes.example`：节点文件示例。
-- `easy_proxies.service`：可选 systemd 服务。
+- `easy-proxies.service`：可选 systemd 服务。
 - `README.md` / `README_ZH.md`：部署和使用说明。
 
 WebUI 已通过 Go `embed` 内嵌进二进制，sing-box 也作为 Go 依赖链接进主程序，不需要额外安装 sing-box 进程。
@@ -214,9 +213,9 @@ WebUI 已通过 Go `embed` 内嵌进二进制，sing-box 也作为 Go 依赖链�
 常用构建和安装命令：
 
 ```bash
-make build          # 构建当前平台 ./easy_proxies
+make build          # 构建当前平台 ./easy-proxies
 make package        # 在 dist/ 生成 OTA 二进制、sha256 和安装包
-make install        # 安装主程序和默认配置
+make install        # 安装主程序和同目录配置到 /opt/easy-proxies
 make install-systemd
 ```
 
@@ -224,20 +223,20 @@ make install-systemd
 
 | 路径 | 用途 |
 |------|------|
-| `/usr/local/bin/easy_proxies` | 安装后的主程序 |
-| `/etc/easy_proxies/config.yaml` | 主配置文件 |
-| `/etc/easy_proxies/nodes.txt` | 使用 `nodes_file` 时的节点列表/缓存 |
-| `/etc/systemd/system/easy_proxies.service` | 可选 systemd 服务 |
+| `/opt/easy-proxies/easy-proxies` | 安装后的主程序 |
+| `/opt/easy-proxies/config.yaml` | 与主程序同目录的主配置文件 |
+| `/opt/easy-proxies/nodes.txt` | 与主程序同目录的节点列表/缓存 |
+| `/etc/systemd/system/easy-proxies.service` | 可选 systemd 服务 |
 
 ## OTA 与 CI
 
-在 `config.yaml` 或 WebUI 设置页中启用 `update.enabled` 后，Easy Proxies 可以从 GitHub Releases 自更新。
+在 `config.yaml` 或 WebUI 设置页中启用 `update.enabled` 后，easy-proxies 可以从 GitHub Releases 自更新。
 
 - `stable` 通道检查最新正式版，下载并校验 SHA256 后自动应用。
 - `dev` 通道跟踪固定的 `dev` 预发布 tag；CI 每次从 `main`/`master` 刷新该 release，程序下载校验后等待 WebUI 或 `POST /api/update/apply` 确认。
 - OTA 使用裸二进制资产：`easy-proxies-linux-amd64` / `easy-proxies-linux-arm64`，并要求同时存在 `.sha256`。
 - 人工安装继续使用 `easy-proxies-linux-amd64.tar.gz` / `easy-proxies-linux-arm64.tar.gz`。
-- 构建时会注入版本信息，可通过 `easy_proxies -version` 和 `GET /api/version` 查看。
+- 构建时会注入版本信息，可通过 `easy-proxies -version` 和 `GET /api/version` 查看。
 
 CI 工作流 [`.github/workflows/release.yml`](.github/workflows/release.yml) 会运行测试、交叉编译 Linux amd64/arm64、在推送 `main`/`master` 时刷新 `dev` 预发布、在推送 `v*` tag 时发布正式版，并继续构建 Docker 镜像。
 
@@ -274,7 +273,7 @@ Docker 仍然可用，适合希望用容器管理生命周期的场景：
 docker compose up -d
 ```
 
-Docker 模式下默认使用 host 网络，并把配置目录挂载到 `./data`。首次启动时容器入口会自动生成 `config.yaml` 和 `nodes.txt`。
+Docker 模式下默认使用 host 网络，并把 `./config.yaml`、`./nodes.txt` 挂载到容器内 `/app`，与 `/app/easy-proxies` 同目录。请优先使用 `docker-start.sh`，它会在启动 Compose 前生成这两个文件；手动执行 `docker compose up -d` 前需要先创建 `config.yaml` 和 `nodes.txt`。
 
 ## 重要运行说明
 
@@ -295,7 +294,7 @@ make test
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=lieyanc/EasyProxies&type=Date)](https://star-history.com/#lieyanc/EasyProxies&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=lieyanc/easy-proxies&type=Date)](https://star-history.com/#lieyanc/easy-proxies&Date)
 
 ## 致谢
 

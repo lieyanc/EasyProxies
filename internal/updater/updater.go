@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"easy_proxies/internal/version"
+	"easy-proxies/internal/version"
 )
 
 type Config struct {
@@ -907,7 +907,7 @@ func normalizeConfig(cfg Config) Config {
 	cfg.ProxyBaseURL = strings.TrimRight(strings.TrimSpace(cfg.ProxyBaseURL), "/")
 	cfg.Repo = strings.TrimSpace(cfg.Repo)
 	if cfg.Repo == "" {
-		cfg.Repo = "lieyanc/EasyProxies"
+		cfg.Repo = "lieyanc/easy-proxies"
 	}
 	return cfg
 }

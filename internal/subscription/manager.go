@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"easy_proxies/internal/boxmgr"
-	"easy_proxies/internal/config"
-	"easy_proxies/internal/monitor"
+	"easy-proxies/internal/boxmgr"
+	"easy-proxies/internal/config"
+	"easy-proxies/internal/monitor"
 )
 
 // Logger defines logging interface.

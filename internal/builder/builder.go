@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"easy_proxies/internal/config"
-	"easy_proxies/internal/geoip"
-	poolout "easy_proxies/internal/outbound/pool"
+	"easy-proxies/internal/config"
+	"easy-proxies/internal/geoip"
+	poolout "easy-proxies/internal/outbound/pool"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"

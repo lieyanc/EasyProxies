@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"easy_proxies/internal/boxmgr"
-	"easy_proxies/internal/config"
-	"easy_proxies/internal/monitor"
-	"easy_proxies/internal/subscription"
-	"easy_proxies/internal/updater"
+	"easy-proxies/internal/boxmgr"
+	"easy-proxies/internal/config"
+	"easy-proxies/internal/monitor"
+	"easy-proxies/internal/subscription"
+	"easy-proxies/internal/updater"
 )
 
 // Run builds the runtime components from config and blocks until shutdown.

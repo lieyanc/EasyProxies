@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"easy_proxies/internal/builder"
-	"easy_proxies/internal/config"
-	"easy_proxies/internal/geoip"
-	"easy_proxies/internal/monitor"
-	"easy_proxies/internal/outbound/pool"
+	"easy-proxies/internal/builder"
+	"easy-proxies/internal/config"
+	"easy-proxies/internal/geoip"
+	"easy-proxies/internal/monitor"
+	"easy-proxies/internal/outbound/pool"
 
 	"github.com/sagernet/sing-box"
 	C "github.com/sagernet/sing-box/constant"

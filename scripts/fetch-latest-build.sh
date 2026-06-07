@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/fetch-latest-build.sh [--repo owner/name] [--stable] [--download-only] [-- <easy_proxies args>]
+  scripts/fetch-latest-build.sh [--repo owner/name] [--stable] [--download-only] [-- <easy-proxies args>]
 
 Options:
   --repo           GitHub repo in owner/name format. Auto-detected by default.

@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"easy_proxies/internal/app"
-	"easy_proxies/internal/config"
-	"easy_proxies/internal/monitor"
-	"easy_proxies/internal/version"
+	"easy-proxies/internal/app"
+	"easy-proxies/internal/config"
+	"easy-proxies/internal/monitor"
+	"easy-proxies/internal/version"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -22,13 +22,16 @@ import (
 func main() {
 	var configPath string
 	var showVersion bool
-	flag.StringVar(&configPath, "config", "config.yaml", "path to config file")
+	flag.StringVar(&configPath, "config", "", "path to config file (default: config.yaml next to executable)")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.Parse()
 
 	if showVersion {
-		fmt.Printf("easy_proxies %s (commit=%s, built=%s)\n", version.Version, version.Commit, version.BuildTime)
+		fmt.Printf("easy-proxies %s (commit=%s, built=%s)\n", version.Version, version.Commit, version.BuildTime)
 		return
+	}
+	if configPath == "" {
+		configPath = defaultConfigPath()
 	}
 
 	var cfg *config.Config
@@ -48,7 +51,7 @@ func main() {
 
 	// Setup logging based on config
 	setupLogging(cfg)
-	log.Printf("Easy Proxies %s (commit=%s, built=%s)", version.Version, version.Commit, version.BuildTime)
+	log.Printf("easy-proxies %s (commit=%s, built=%s)", version.Version, version.Commit, version.BuildTime)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -57,6 +60,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "proxy pool exited with error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func defaultConfigPath() string {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "config.yaml"
+	}
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
+	return filepath.Join(filepath.Dir(exePath), "config.yaml")
 }
 
 func setupLogging(cfg *config.Config) {

@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"easy_proxies/internal/config"
-	"easy_proxies/internal/geoip"
-	"easy_proxies/internal/updater"
-	"easy_proxies/internal/version"
+	"easy-proxies/internal/config"
+	"easy-proxies/internal/geoip"
+	"easy-proxies/internal/updater"
+	"easy-proxies/internal/version"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -817,7 +817,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"channel":        "stable",
 				"check_interval": "1h",
 				"proxy_base_url": "https://dl.repo.chycloud.top",
-				"repo":           "lieyanc/EasyProxies",
+				"repo":           "lieyanc/easy-proxies",
 			},
 		}
 		if cfg != nil {
@@ -1027,7 +1027,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				nextCfg.Update.ProxyBaseURL = "https://dl.repo.chycloud.top"
 			}
 			if nextCfg.Update.Repo == "" {
-				nextCfg.Update.Repo = "lieyanc/EasyProxies"
+				nextCfg.Update.Repo = "lieyanc/easy-proxies"
 			}
 		}
 

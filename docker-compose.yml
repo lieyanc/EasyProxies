@@ -1,7 +1,7 @@
 services:
-  easy_proxies:
+  easy-proxies:
     image: ${EASY_PROXIES_IMAGE:-ghcr.io/lieyanc/easy-proxies:latest}
-    container_name: easy_proxies
+    container_name: easy-proxies
     restart: unless-stopped
     # 方式一：使用主机网络模式（推荐，支持端口自动重分配）
     network_mode: host
@@ -29,16 +29,13 @@ services:
     # 使用示例：
     #
     #   方式一：映射配置目录（推荐，零配置启动）
-    #     docker run --user $(id -u):$(id -g) -v ./data:/etc/easy_proxies ghcr.io/lieyanc/easy-proxies:latest
+    #     docker run --user $(id -u):$(id -g) -v ./config.yaml:/app/config.yaml -v ./nodes.txt:/app/nodes.txt -v ./logs:/app/logs ghcr.io/lieyanc/easy-proxies:latest
     #
     #   方式二：映射配置文件（传统方式）
-    #     docker run -v ./config.yaml:/etc/easy_proxies/config.yaml -v ./nodes.txt:/etc/easy_proxies/nodes.txt ghcr.io/lieyanc/easy-proxies:latest
+    #     docker run -v ./config.yaml:/app/config.yaml -v ./nodes.txt:/app/nodes.txt ghcr.io/lieyanc/easy-proxies:latest
     #
     volumes:
-      # 方式一：映射配置目录（首次启动自动生成 config.yaml 和 nodes.txt）
-      - ./data:/etc/easy_proxies
-      # 方式二：映射配置文件（需要预先创建）
-      # - ./config.yaml:/etc/easy_proxies/config.yaml
-      # - ./nodes.txt:/etc/easy_proxies/nodes.txt
-      # 日志映射目录（当从 WebUI 开启日志写到文件时有效）
+      # 配置文件与二进制同目录：/app/config.yaml 和 /app/nodes.txt
+      - ./config.yaml:/app/config.yaml
+      - ./nodes.txt:/app/nodes.txt
       - ./logs:/app/logs

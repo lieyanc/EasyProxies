@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"easy_proxies/internal/monitor"
+	"easy-proxies/internal/monitor"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"

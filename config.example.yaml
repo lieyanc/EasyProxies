@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Easy Proxies 完整配置文件
+# easy-proxies 完整配置文件
 # ═══════════════════════════════════════════════════════════════
 
 # ───────────────────────────────────────────────────────────────
@@ -17,14 +17,14 @@ log_level: info
 # 日志轮转配置
 # ───────────────────────────────────────────────────────────────
 # output: "stdout"（仅控制台）或 "file"（控制台+文件轮转），默认 stdout
-# file: 日志文件路径，默认 logs/easy_proxies.log
+# file: 日志文件路径，默认 logs/easy-proxies.log
 # max_size: 单个日志文件最大 MB，超出后自动轮转，默认 50
 # max_backups: 保留旧日志文件个数，默认 3
 # max_age: 保留旧日志文件天数，默认 7
 # compress: 是否压缩轮转后的旧日志，默认 false
 log:
   output: stdout
-  file: logs/easy_proxies.log
+  file: logs/easy-proxies.log
   max_size: 50
   max_backups: 3
   max_age: 7
@@ -43,7 +43,7 @@ update:
   channel: stable
   check_interval: 1h
   proxy_base_url: https://dl.repo.chycloud.top
-  repo: lieyanc/EasyProxies
+  repo: lieyanc/easy-proxies
 
 # 全局跳过 SSL 证书验证（默认 false，不建议在生产环境启用）
 skip_cert_verify: false

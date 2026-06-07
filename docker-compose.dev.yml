@@ -1,12 +1,12 @@
 services:
-  easy_proxies:
+  easy-proxies:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         GOPROXY: https://goproxy.cn,direct
-    image: easy_proxies:dev
-    container_name: easy_proxies_dev
+    image: easy-proxies:dev
+    container_name: easy-proxies-dev
     restart: unless-stopped
     # macOS 不支持 network_mode: host，必须使用端口映射
     ports:
@@ -15,5 +15,6 @@ services:
       - "24000-24100:24000-24100"  # Multi-port
     user: "${UID:-10001}:${GID:-10001}"
     volumes:
-      - ./data:/etc/easy_proxies
+      - ./config.yaml:/app/config.yaml
+      - ./nodes.txt:/app/nodes.txt
       - ./logs:/app/logs

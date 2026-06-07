@@ -11,7 +11,7 @@ on:
 env:
   REGISTRY: ghcr.io
   BUILD_TAGS: with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api
-  VERSION_PKG: easy_proxies/internal/version
+  VERSION_PKG: easy-proxies/internal/version
 
 jobs:
   meta:
@@ -107,7 +107,7 @@ jobs:
           ldflags="-s -w -X ${VERSION_PKG}.Version=${VERSION} -X ${VERSION_PKG}.Commit=${COMMIT} -X ${VERSION_PKG}.BuildTime=${BUILD_TIME}"
 
           go build -trimpath -tags "$BUILD_TAGS" -ldflags "$ldflags" \
-            -o "dist/${bin}" ./cmd/easy_proxies
+            -o "dist/${bin}" ./cmd/easy-proxies
 
           (
             cd dist
@@ -115,8 +115,10 @@ jobs:
           )
 
           mkdir -p "dist/${pkg}"
-          cp "dist/${bin}" "dist/${pkg}/easy_proxies"
-          cp config.example.yaml nodes.example README.md README_ZH.md contrib/systemd/easy_proxies.service "dist/${pkg}/"
+          cp "dist/${bin}" "dist/${pkg}/easy-proxies"
+          cp config.example.yaml nodes.example README.md README_ZH.md contrib/systemd/easy-proxies.service "dist/${pkg}/"
+          cp config.example.yaml "dist/${pkg}/config.yaml"
+          cp nodes.example "dist/${pkg}/nodes.txt"
           tar -C dist -czf "dist/easy-proxies-${{ matrix.target }}.tar.gz" "${pkg}"
           (
             cd dist

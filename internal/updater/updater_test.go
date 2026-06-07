@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"easy_proxies/internal/version"
+	"easy-proxies/internal/version"
 )
 
 func TestCheckOnlySelectsNewestStableRelease(t *testing.T) {

@@ -1,4 +1,4 @@
-# Easy Proxies
+# easy-proxies
 
 [简体中文](README_ZH.md)
 
@@ -27,46 +27,43 @@ Download the release archive for your server architecture:
 ```bash
 # amd64
 curl -L -o easy-proxies-linux-amd64.tar.gz \
-  https://github.com/lieyanc/EasyProxies/releases/latest/download/easy-proxies-linux-amd64.tar.gz
+  https://github.com/lieyanc/easy-proxies/releases/latest/download/easy-proxies-linux-amd64.tar.gz
 
 # arm64
 curl -L -o easy-proxies-linux-arm64.tar.gz \
-  https://github.com/lieyanc/EasyProxies/releases/latest/download/easy-proxies-linux-arm64.tar.gz
+  https://github.com/lieyanc/easy-proxies/releases/latest/download/easy-proxies-linux-arm64.tar.gz
 ```
 
-Install the binary:
+Unpack the archive. The release folder already contains `easy-proxies`, `config.yaml`, and `nodes.txt` in the same directory:
 
 ```bash
 tar -xzf easy-proxies-linux-amd64.tar.gz
-sudo install -m755 easy-proxies-*/easy_proxies /usr/local/bin/easy_proxies
+cd easy-proxies-*-linux-amd64
 ```
 
 ### 2. Prepare Configuration
 
-```bash
-sudo mkdir -p /etc/easy_proxies
-sudo cp easy-proxies-*/config.example.yaml /etc/easy_proxies/config.yaml
-sudo cp easy-proxies-*/nodes.example /etc/easy_proxies/nodes.txt
-```
-
-Edit `/etc/easy_proxies/config.yaml` and add your proxy nodes (inline nodes, `nodes.txt` file, or subscription URLs).
+Edit `config.yaml` in the current directory and add your proxy nodes (inline nodes, `nodes.txt` file, or subscription URLs).
 
 ### 3. Start the Service
 
 Run directly:
 
 ```bash
-easy_proxies -config /etc/easy_proxies/config.yaml
+./easy-proxies
 ```
 
 Or install the packaged systemd unit:
 
 ```bash
-sudo install -Dm644 easy-proxies-*/easy_proxies.service /etc/systemd/system/easy_proxies.service
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin easyproxies 2>/dev/null || true
-sudo chown -R easyproxies:easyproxies /etc/easy_proxies
+cd ..
+sudo mkdir -p /opt/easy-proxies
+sudo cp -a easy-proxies-*-linux-amd64/. /opt/easy-proxies/
+sudo install -Dm644 /opt/easy-proxies/easy-proxies.service /etc/systemd/system/easy-proxies.service
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin easy-proxies 2>/dev/null || true
+sudo chown -R easy-proxies:easy-proxies /opt/easy-proxies
 sudo systemctl daemon-reload
-sudo systemctl enable --now easy_proxies
+sudo systemctl enable --now easy-proxies
 ```
 
 ### 4. Build from Source
@@ -75,7 +72,7 @@ sudo systemctl enable --now easy_proxies
 cp config.example.yaml config.yaml
 cp nodes.example nodes.txt
 make build
-./easy_proxies -config config.yaml
+./easy-proxies -config config.yaml
 ```
 
 The helper script does the same local-first setup and builds the binary if needed:
@@ -144,7 +141,7 @@ See [config.example.yaml](config.example.yaml) for the full documented configura
 
 ### Overview
 
-When GeoIP is enabled, Easy Proxies automatically classifies your proxy nodes by geographic region and provides a separate HTTP proxy endpoint that lets you route traffic through nodes in a specific country/region.
+When GeoIP is enabled, easy-proxies automatically classifies your proxy nodes by geographic region and provides a separate HTTP proxy endpoint that lets you route traffic through nodes in a specific country/region.
 
 ### Supported Regions
 
@@ -362,10 +359,12 @@ When `management.password` is empty, authentication is bypassed, but the managem
 
 Release archives contain only the runtime pieces needed on a server:
 
-- `easy_proxies`: statically linked Linux binary
+- `easy-proxies`: statically linked Linux binary
+- `config.yaml`: editable runtime configuration in the binary directory
+- `nodes.txt`: editable node list/cache in the binary directory
 - `config.example.yaml`: full documented configuration
 - `nodes.example`: example node list
-- `easy_proxies.service`: optional systemd unit
+- `easy-proxies.service`: optional systemd unit
 - `README.md` / `README_ZH.md`: deployment and usage notes
 
 The WebUI is embedded into the binary with Go `embed`, and sing-box is linked as a Go dependency. There is no separate sing-box process to install.
@@ -373,9 +372,9 @@ The WebUI is embedded into the binary with Go `embed`, and sing-box is linked as
 ### Build Targets
 
 ```bash
-make build          # build ./easy_proxies for the local platform
+make build          # build ./easy-proxies for the local platform
 make package        # create OTA binary + sha256 + install archive under dist/
-make install        # install binary and default config under /usr/local and /etc
+make install        # install binary and config under /opt/easy-proxies
 make install-systemd
 ```
 
@@ -383,20 +382,20 @@ make install-systemd
 
 | Path | Purpose |
 |------|---------|
-| `/usr/local/bin/easy_proxies` | Installed binary |
-| `/etc/easy_proxies/config.yaml` | Main configuration |
-| `/etc/easy_proxies/nodes.txt` | Node cache/list when `nodes_file` is used |
-| `/etc/systemd/system/easy_proxies.service` | Optional systemd unit |
+| `/opt/easy-proxies/easy-proxies` | Installed binary |
+| `/opt/easy-proxies/config.yaml` | Main configuration beside the binary |
+| `/opt/easy-proxies/nodes.txt` | Node cache/list beside the binary |
+| `/etc/systemd/system/easy-proxies.service` | Optional systemd unit |
 
 ## OTA And CI
 
-Easy Proxies can self-update from GitHub Releases when `update.enabled` is enabled in `config.yaml` or the WebUI settings page.
+easy-proxies can self-update from GitHub Releases when `update.enabled` is enabled in `config.yaml` or the WebUI settings page.
 
 - `stable` channel checks the latest non-prerelease release and applies it automatically after download and SHA256 verification.
 - `dev` channel tracks the fixed `dev` prerelease tag refreshed from `main`/`master`; it downloads and verifies the binary, then waits for confirmation in the WebUI or `POST /api/update/apply`.
 - OTA assets are bare binaries named `easy-proxies-linux-amd64` / `easy-proxies-linux-arm64` plus `.sha256`.
 - Manual installation assets remain available as `easy-proxies-linux-amd64.tar.gz` / `easy-proxies-linux-arm64.tar.gz`.
-- Version metadata is injected at build time and exposed via `easy_proxies -version` and `GET /api/version`.
+- Version metadata is injected at build time and exposed via `easy-proxies -version` and `GET /api/version`.
 
 The workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) runs tests, cross-compiles Linux amd64/arm64 binaries, publishes the fixed `dev` prerelease on pushes to `main`/`master`, publishes stable releases on `v*` tags, and still builds the Docker image.
 
@@ -425,18 +424,19 @@ Fetch the latest release asset with GitHub CLI:
 
 ## Docker Deployment (Optional)
 
-Docker remains supported when you prefer container lifecycle management. The compose setup uses host networking for automatic port management, and the container entrypoint can generate config files on first run:
+Docker remains supported when you prefer container lifecycle management. The compose setup uses host networking for automatic port management, and `docker-start.sh` creates `config.yaml` and `nodes.txt` before starting Compose:
 
 ```yaml
 services:
-  easy_proxies:
+  easy-proxies:
     image: ${EASY_PROXIES_IMAGE:-ghcr.io/lieyanc/easy-proxies:latest}
-    container_name: easy_proxies
+    container_name: easy-proxies
     restart: unless-stopped
     network_mode: host
     user: "${UID:-10001}:${GID:-10001}"
     volumes:
-      - ./data:/etc/easy_proxies
+      - ./config.yaml:/app/config.yaml
+      - ./nodes.txt:/app/nodes.txt
       - ./logs:/app/logs
 ```
 
@@ -444,13 +444,13 @@ Run it with:
 
 ```bash
 ./docker-start.sh
-# or manually:
+# or manually after creating config.yaml and nodes.txt:
 docker compose up -d
 ```
 
 ### Docker Notes
 
-- **Zero-config**: When mapping a directory, `config.yaml` and `nodes.txt` are auto-generated on first run.
+- **Same directory config**: In the container, `/app/easy-proxies`, `/app/config.yaml`, and `/app/nodes.txt` live together.
 - **Permissions**: Use `--user $(id -u):$(id -g)` to match your host user for file access.
 - **Multi-platform**: Supports amd64 and arm64 architectures.
 - **Reload**: `/api/reload` and subscription refresh will interrupt active connections.
@@ -467,7 +467,7 @@ make test
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=lieyanc/EasyProxies&type=Date)](https://star-history.com/#lieyanc/EasyProxies&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=lieyanc/easy-proxies&type=Date)](https://star-history.com/#lieyanc/easy-proxies&Date)
 
 ## Acknowledgements
 

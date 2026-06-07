@@ -1,4 +1,4 @@
-module easy_proxies
+module easy-proxies
 
 go 1.25.0
 
