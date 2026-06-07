@@ -41,7 +41,7 @@ docker run --user $(id -u):$(id -g) \
   -v $(pwd)/data:/etc/easy_proxies \
   -v $(pwd)/logs:/app/logs \
   --network host \
-  ghcr.io/jasonwong1991/easy_proxies:latest
+  ghcr.io/lieyanc/easy-proxies:latest
 ```
 
 Or use docker compose:
@@ -331,7 +331,7 @@ The default setup uses host networking (recommended for automatic port managemen
 ```yaml
 services:
   easy_proxies:
-    image: ghcr.io/jasonwong1991/easy_proxies:latest
+    image: ${EASY_PROXIES_IMAGE:-ghcr.io/lieyanc/easy-proxies:latest}
     container_name: easy_proxies
     restart: unless-stopped
     network_mode: host
@@ -369,7 +369,7 @@ go test ./...
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=jasonwong1991/easy_proxies&type=Date)](https://star-history.com/#jasonwong1991/easy_proxies&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=lieyanc/EasyProxies&type=Date)](https://star-history.com/#lieyanc/EasyProxies&Date)
 
 ## Acknowledgements
 

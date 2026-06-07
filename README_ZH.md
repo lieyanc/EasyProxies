@@ -173,7 +173,7 @@ go test ./...
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=jasonwong1991/easy_proxies&type=Date)](https://star-history.com/#jasonwong1991/easy_proxies&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=lieyanc/EasyProxies&type=Date)](https://star-history.com/#lieyanc/EasyProxies&Date)
 
 ## 致谢
 
@@ -182,4 +182,3 @@ go test ./...
 ## 许可证
 
 MIT License
-
