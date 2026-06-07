@@ -262,6 +262,10 @@ func (m *Manager) Status() monitor.SubscriptionStatus {
 
 // refreshLoop runs the periodic refresh.
 func (m *Manager) refreshLoop(interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+
 	m.mu.RLock()
 	autoEnabled := m.baseCfg.SubscriptionRefresh.Enabled
 	m.mu.RUnlock()
@@ -540,13 +544,13 @@ func (m *Manager) fetchSubscription(subURL string, timeout time.Duration) ([]con
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
 
-	// Limit read size to prevent memory exhaustion
-	const maxBodySize = 10 * 1024 * 1024 // 10MB
-	limitedReader := io.LimitReader(resp.Body, maxBodySize)
-
-	body, err := io.ReadAll(limitedReader)
+	const maxBodySize = 10 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if len(body) > maxBodySize {
+		return nil, fmt.Errorf("subscription response exceeds %d bytes", maxBodySize)
 	}
 
 	return config.ParseSubscriptionContent(string(body))

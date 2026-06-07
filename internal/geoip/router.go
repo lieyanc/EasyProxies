@@ -73,8 +73,10 @@ func (r *Router) Start(ctx context.Context) error {
 	addr := fmt.Sprintf("%s:%d", r.cfg.Listen, r.cfg.Port)
 
 	r.server = &http.Server{
-		Addr:    addr,
-		Handler: r,
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {

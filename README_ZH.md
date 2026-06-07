@@ -71,7 +71,7 @@ pool:
 
 management:
   enabled: true
-  listen: 0.0.0.0:9091
+  listen: 127.0.0.1:9091
   probe_target: http://cp.cloudflare.com/generate_204
   password: ""
 
@@ -152,7 +152,7 @@ dns:
 - `GET|POST|PUT|DELETE /api/nodes/config[...]`
 - `POST /api/reload`
 
-`management.password` 为空时，Web/API 不要求登录。
+`management.password` 为空时，Web/API 不要求登录，但仅允许监听本机地址；绑定公网或局域网地址时必须设置密码。
 
 ## 重要运行说明
 

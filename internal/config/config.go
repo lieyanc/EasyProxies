@@ -259,6 +259,9 @@ func (c *Config) normalize() error {
 		defaultEnabled := true
 		c.Management.Enabled = &defaultEnabled
 	}
+	if err := c.ValidateManagementSecurity(); err != nil {
+		return err
+	}
 
 	// Subscription refresh defaults
 	if c.SubscriptionRefresh.Interval <= 0 {
@@ -475,6 +478,9 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 		defaultEnabled := true
 		c.Management.Enabled = &defaultEnabled
 	}
+	if err := c.ValidateManagementSecurity(); err != nil {
+		return err
+	}
 	if c.SubscriptionRefresh.Interval <= 0 {
 		c.SubscriptionRefresh.Interval = 1 * time.Hour
 	}
@@ -589,6 +595,34 @@ func (c *Config) normalizeLogConfig() {
 	}
 }
 
+// ValidateManagementSecurity prevents unauthenticated management endpoints from
+// binding to addresses reachable outside the local machine.
+func (c *Config) ValidateManagementSecurity() error {
+	if !c.ManagementEnabled() || strings.TrimSpace(c.Management.Password) != "" {
+		return nil
+	}
+
+	listen := strings.TrimSpace(c.Management.Listen)
+	host := listen
+	if h, _, err := net.SplitHostPort(listen); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return fmt.Errorf("management.password is required when management.listen is public (%q)", listen)
+	}
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() {
+			return nil
+		}
+		return fmt.Errorf("management.password is required when management.listen is not loopback (%q)", listen)
+	}
+	return fmt.Errorf("management.password is required when management.listen is not localhost (%q)", listen)
+}
+
 // ManagementEnabled reports whether the monitoring endpoint should run.
 func (c *Config) ManagementEnabled() bool {
 	if c.Management.Enabled == nil {
@@ -638,9 +672,13 @@ func loadNodesFromSubscription(subURL string, timeout time.Duration) ([]NodeConf
 		return nil, fmt.Errorf("subscription returned status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	const maxSubscriptionBodySize = 10 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSubscriptionBodySize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if len(body) > maxSubscriptionBodySize {
+		return nil, fmt.Errorf("subscription response exceeds %d bytes", maxSubscriptionBodySize)
 	}
 
 	content := string(body)
@@ -1278,7 +1316,14 @@ func IsPortAvailable(address string, port uint16) bool {
 
 // writeFileWithLock writes data to a file with exclusive locking.
 func writeFileWithLock(path string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, perm)
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create directory: %w", err)
+		}
+	}
+
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, perm)
 	if err != nil {
 		return fmt.Errorf("open file: %w", err)
 	}
@@ -1290,9 +1335,22 @@ func writeFileWithLock(path string, data []byte, perm os.FileMode) error {
 	}
 	defer unlockFile(f)
 
-	// Write data
-	if _, err := f.Write(data); err != nil {
+	if err := f.Truncate(0); err != nil {
+		return fmt.Errorf("truncate file: %w", err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek file: %w", err)
+	}
+	if err := f.Chmod(perm); err != nil {
+		return fmt.Errorf("chmod file: %w", err)
+	}
+
+	n, err := f.Write(data)
+	if err != nil {
 		return fmt.Errorf("write file: %w", err)
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
 	}
 
 	// Ensure data is written to disk

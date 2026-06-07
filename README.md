@@ -97,7 +97,7 @@ pool:
 
 management:
   enabled: true
-  listen: 0.0.0.0:9091
+  listen: 127.0.0.1:9091
   probe_target: http://cp.cloudflare.com/generate_204
   password: ""
 
@@ -292,7 +292,7 @@ Supports Base64, plain text, and Clash YAML formats. When subscriptions are conf
 
 ## WebUI Dashboard
 
-Access at `http://your-server:9091` (configurable via the `management` section).
+Access at `http://localhost:9091` by default (configurable via the `management` section).
 
 Features:
 
@@ -302,7 +302,7 @@ Features:
 - **Console**: Real-time application logs (last 1000 lines, WebSocket streaming)
 - **Settings**: All configuration options editable from the browser, changes persist to `config.yaml`
 
-When `management.password` is empty, authentication is bypassed.
+When `management.password` is empty, authentication is bypassed, but the management server may only listen on a loopback address. Set a password before binding it to a LAN or public address.
 
 ## Management API
 

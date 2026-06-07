@@ -692,24 +692,34 @@ func buildShadowsocksOptions(u *url.URL) (option.ShadowsocksOutboundOptions, err
 		return option.ShadowsocksOutboundOptions{}, err
 	}
 
-	// Decode userinfo (base64 encoded method:password)
-	userInfo := u.User.String()
-	decoded, err := base64.RawURLEncoding.DecodeString(userInfo)
-	if err != nil {
-		// Try standard base64
-		decoded, err = base64.StdEncoding.DecodeString(userInfo)
+	if u.User == nil {
+		return option.ShadowsocksOutboundOptions{}, errors.New("shadowsocks uri missing userinfo")
+	}
+	method := u.User.Username()
+	password, hasPassword := u.User.Password()
+
+	if !hasPassword {
+		userInfo := u.User.String()
+		decoded, err := base64.RawURLEncoding.DecodeString(userInfo)
 		if err != nil {
-			return option.ShadowsocksOutboundOptions{}, fmt.Errorf("decode shadowsocks userinfo: %w", err)
+			decoded, err = base64.StdEncoding.DecodeString(userInfo)
+			if err != nil {
+				return option.ShadowsocksOutboundOptions{}, fmt.Errorf("decode shadowsocks userinfo: %w", err)
+			}
 		}
+
+		parts := strings.SplitN(string(decoded), ":", 2)
+		if len(parts) != 2 {
+			return option.ShadowsocksOutboundOptions{}, errors.New("shadowsocks userinfo format must be method:password")
+		}
+		method = parts[0]
+		password = parts[1]
 	}
 
-	parts := strings.SplitN(string(decoded), ":", 2)
-	if len(parts) != 2 {
+	method = normalizeShadowsocksMethod(method)
+	if method == "" || password == "" {
 		return option.ShadowsocksOutboundOptions{}, errors.New("shadowsocks userinfo format must be method:password")
 	}
-
-	method := normalizeShadowsocksMethod(parts[0])
-	password := parts[1]
 
 	opts := option.ShadowsocksOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: server, ServerPort: uint16(port)},

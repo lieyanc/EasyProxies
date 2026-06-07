@@ -70,12 +70,12 @@ type SubscriptionStatus struct {
 
 // Server exposes HTTP endpoints for monitoring.
 type Server struct {
-	cfg          Config
-	cfgMu        sync.RWMutex   // 保护动态配置字段
-	cfgSrc       *config.Config // 可持久化的配置对象
-	mgr          *Manager
-	srv          *http.Server
-	logger       *log.Logger
+	cfg    Config
+	cfgMu  sync.RWMutex   // 保护动态配置字段
+	cfgSrc *config.Config // 可持久化的配置对象
+	mgr    *Manager
+	srv    *http.Server
+	logger *log.Logger
 
 	// Session management
 	sessionMu  sync.RWMutex
@@ -133,7 +133,12 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
 	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
-	s.srv = &http.Server{Addr: cfg.Listen, Handler: mux}
+	s.srv = &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	return s
 }
 
@@ -192,51 +197,6 @@ func (s *Server) getSettings() (externalIP, probeTarget string, skipCertVerify b
 		logCfg = s.cfgSrc.Log
 	}
 	return s.cfg.ExternalIP, s.cfg.ProbeTarget, s.cfg.SkipCertVerify, logCfg
-}
-
-// updateSettings updates dynamic settings and persists to config file.
-func (s *Server) updateSettings(externalIP, probeTarget string, skipCertVerify bool, logCfg *config.LogConfig, geoipEnabled bool) error {
-	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
-
-	s.cfg.ExternalIP = externalIP
-	s.cfg.ProbeTarget = probeTarget
-	s.cfg.SkipCertVerify = skipCertVerify
-
-	if s.cfgSrc == nil {
-		return errors.New("配置存储未初始化")
-	}
-
-	s.cfgSrc.ExternalIP = externalIP
-	s.cfgSrc.Management.ProbeTarget = probeTarget
-	s.cfgSrc.SkipCertVerify = skipCertVerify
-
-	// GeoIP settings
-	s.cfgSrc.GeoIP.Enabled = geoipEnabled
-	if geoipEnabled && s.cfgSrc.GeoIP.DatabasePath == "" {
-		s.cfgSrc.GeoIP.DatabasePath = "./GeoLite2-Country.mmdb"
-		s.cfgSrc.GeoIP.AutoUpdateEnabled = true
-		s.cfgSrc.GeoIP.AutoUpdateInterval = 24 * time.Hour
-	}
-
-	if logCfg != nil {
-		s.cfgSrc.Log.Output = logCfg.Output
-		if logCfg.MaxSize > 0 {
-			s.cfgSrc.Log.MaxSize = logCfg.MaxSize
-		}
-		if logCfg.MaxBackups > 0 {
-			s.cfgSrc.Log.MaxBackups = logCfg.MaxBackups
-		}
-		if logCfg.MaxAge > 0 {
-			s.cfgSrc.Log.MaxAge = logCfg.MaxAge
-		}
-		s.cfgSrc.Log.Compress = logCfg.Compress
-	}
-
-	if err := s.cfgSrc.SaveSettings(); err != nil {
-		return fmt.Errorf("保存配置失败: %w", err)
-	}
-	return nil
 }
 
 // Start launches the HTTP server.
@@ -933,56 +893,103 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if err := s.updateSettings(extIP, probeTarget, req.SkipCertVerify, logCfg, req.GeoIP != nil && req.GeoIP.Enabled); err != nil {
+		s.cfgMu.Lock()
+		if s.cfgSrc == nil {
+			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)
-			writeJSON(w, map[string]any{"error": err.Error()})
+			writeJSON(w, map[string]any{"error": "配置存储未初始化"})
 			return
 		}
 
+		nextCfg := *s.cfgSrc
+		nextCfg.ExternalIP = extIP
+		nextCfg.Management.ProbeTarget = probeTarget
+		nextCfg.SkipCertVerify = req.SkipCertVerify
 
-		// Update extended settings
-		s.cfgMu.Lock()
-		if s.cfgSrc != nil {
-			if req.Mode != "" {
-				s.cfgSrc.Mode = req.Mode
-			}
-			if req.Listener != nil {
-				s.cfgSrc.Listener.Address = req.Listener.Address
-				s.cfgSrc.Listener.Port = req.Listener.Port
-				s.cfgSrc.Listener.Username = req.Listener.Username
-				s.cfgSrc.Listener.Password = req.Listener.Password
-			}
-			if req.MultiPort != nil {
-				s.cfgSrc.MultiPort.Address = req.MultiPort.Address
-				s.cfgSrc.MultiPort.BasePort = req.MultiPort.BasePort
-				s.cfgSrc.MultiPort.Username = req.MultiPort.Username
-				s.cfgSrc.MultiPort.Password = req.MultiPort.Password
-			}
-			if req.Pool != nil {
-				s.cfgSrc.Pool.Mode = req.Pool.Mode
-				s.cfgSrc.Pool.FailureThreshold = req.Pool.FailureThreshold
-				if req.Pool.BlacklistDuration != "" {
-					if d, err := time.ParseDuration(req.Pool.BlacklistDuration); err == nil {
-						s.cfgSrc.Pool.BlacklistDuration = d
-					}
+		if req.Mode != "" {
+			nextCfg.Mode = req.Mode
+		}
+		if req.Listener != nil {
+			nextCfg.Listener.Address = req.Listener.Address
+			nextCfg.Listener.Port = req.Listener.Port
+			nextCfg.Listener.Username = req.Listener.Username
+			nextCfg.Listener.Password = req.Listener.Password
+		}
+		if req.MultiPort != nil {
+			nextCfg.MultiPort.Address = req.MultiPort.Address
+			nextCfg.MultiPort.BasePort = req.MultiPort.BasePort
+			nextCfg.MultiPort.Username = req.MultiPort.Username
+			nextCfg.MultiPort.Password = req.MultiPort.Password
+		}
+		if req.Pool != nil {
+			nextCfg.Pool.Mode = req.Pool.Mode
+			nextCfg.Pool.FailureThreshold = req.Pool.FailureThreshold
+			if req.Pool.BlacklistDuration != "" {
+				if d, err := time.ParseDuration(req.Pool.BlacklistDuration); err == nil {
+					nextCfg.Pool.BlacklistDuration = d
 				}
 			}
-			if req.Management != nil {
-				s.cfgSrc.Management.Listen = req.Management.Listen
-				s.cfgSrc.Management.Password = req.Management.Password
+		}
+		if req.Management != nil {
+			nextCfg.Management.Listen = req.Management.Listen
+			nextCfg.Management.Password = req.Management.Password
+		}
+		if logCfg != nil {
+			nextCfg.Log.Output = logCfg.Output
+			if logCfg.MaxSize > 0 {
+				nextCfg.Log.MaxSize = logCfg.MaxSize
 			}
-			if req.GeoIP != nil {
-				s.cfgSrc.GeoIP.DatabasePath = req.GeoIP.DatabasePath
-				s.cfgSrc.GeoIP.Listen = req.GeoIP.Listen
-				s.cfgSrc.GeoIP.Port = req.GeoIP.Port
-				s.cfgSrc.GeoIP.AutoUpdateEnabled = req.GeoIP.AutoUpdateEnabled
-				if req.GeoIP.AutoUpdateInterval != "" {
-					if d, err := time.ParseDuration(req.GeoIP.AutoUpdateInterval); err == nil {
-						s.cfgSrc.GeoIP.AutoUpdateInterval = d
-					}
+			if logCfg.MaxBackups > 0 {
+				nextCfg.Log.MaxBackups = logCfg.MaxBackups
+			}
+			if logCfg.MaxAge > 0 {
+				nextCfg.Log.MaxAge = logCfg.MaxAge
+			}
+			nextCfg.Log.Compress = logCfg.Compress
+		}
+		if req.GeoIP != nil {
+			nextCfg.GeoIP.Enabled = req.GeoIP.Enabled
+			nextCfg.GeoIP.DatabasePath = req.GeoIP.DatabasePath
+			nextCfg.GeoIP.Listen = req.GeoIP.Listen
+			nextCfg.GeoIP.Port = req.GeoIP.Port
+			nextCfg.GeoIP.AutoUpdateEnabled = req.GeoIP.AutoUpdateEnabled
+			if req.GeoIP.AutoUpdateInterval != "" {
+				if d, err := time.ParseDuration(req.GeoIP.AutoUpdateInterval); err == nil {
+					nextCfg.GeoIP.AutoUpdateInterval = d
 				}
 			}
-			_ = s.cfgSrc.SaveSettings()
+			if nextCfg.GeoIP.Enabled && nextCfg.GeoIP.DatabasePath == "" {
+				nextCfg.GeoIP.DatabasePath = "./GeoLite2-Country.mmdb"
+				nextCfg.GeoIP.AutoUpdateEnabled = true
+				nextCfg.GeoIP.AutoUpdateInterval = 24 * time.Hour
+			}
+		}
+
+		if err := nextCfg.ValidateManagementSecurity(); err != nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := nextCfg.SaveSettings(); err != nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err)})
+			return
+		}
+
+		*s.cfgSrc = nextCfg
+		s.cfg.ExternalIP = nextCfg.ExternalIP
+		s.cfg.ProbeTarget = nextCfg.Management.ProbeTarget
+		s.cfg.SkipCertVerify = nextCfg.SkipCertVerify
+		s.cfg.Password = nextCfg.Management.Password
+		s.cfg.Listen = nextCfg.Management.Listen
+		if nextCfg.Mode == "multi-port" || nextCfg.Mode == "hybrid" {
+			s.cfg.ProxyUsername = nextCfg.MultiPort.Username
+			s.cfg.ProxyPassword = nextCfg.MultiPort.Password
+		} else {
+			s.cfg.ProxyUsername = nextCfg.Listener.Username
+			s.cfg.ProxyPassword = nextCfg.Listener.Password
 		}
 		s.cfgMu.Unlock()
 
@@ -1099,20 +1106,24 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		// Update in-memory config and persist to disk
 		s.cfgMu.Lock()
-		if s.cfgSrc != nil {
-			s.cfgSrc.Subscriptions = cleanURLs
-			s.cfgSrc.SubscriptionRefresh.Enabled = req.Enabled
-			s.cfgSrc.SubscriptionRefresh.Interval = interval
-			// Always persist to disk regardless of subscription manager state
-			if err := s.cfgSrc.SaveSettings(); err != nil {
-				s.cfgMu.Unlock()
-				w.WriteHeader(http.StatusInternalServerError)
-				writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err)})
-				return
-			}
+		if s.cfgSrc == nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{"error": "配置存储未初始化"})
+			return
 		}
+		nextCfg := *s.cfgSrc
+		nextCfg.Subscriptions = cleanURLs
+		nextCfg.SubscriptionRefresh.Enabled = req.Enabled
+		nextCfg.SubscriptionRefresh.Interval = interval
+		if err := nextCfg.SaveSettings(); err != nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err)})
+			return
+		}
+		*s.cfgSrc = nextCfg
 		s.cfgMu.Unlock()
 
 		// Hot-reload subscription manager and wait for refresh to complete
@@ -1130,13 +1141,16 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		status := s.subRefresher.Status()
+		nodeCount := 0
+		if s.subRefresher != nil {
+			nodeCount = s.subRefresher.Status().NodeCount
+		}
 		writeJSON(w, map[string]any{
 			"message":       "订阅配置已更新并生效",
 			"subscriptions": cleanURLs,
 			"enabled":       req.Enabled,
 			"interval":      interval.String(),
-			"node_count":    status.NodeCount,
+			"node_count":    nodeCount,
 		})
 
 	default:

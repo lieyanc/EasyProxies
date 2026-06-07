@@ -976,7 +976,7 @@
       return 'var(--error)';
     }
     function formatTime(ts) {
-      if(tsc || ts==='0001-01-01T00:00:00Z') return '-';
+      if(!ts || ts==='0001-01-01T00:00:00Z') return '-';
       return new Date(ts).toLocaleTimeString();
     }
 

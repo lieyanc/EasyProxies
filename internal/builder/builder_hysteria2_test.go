@@ -47,3 +47,21 @@ func TestBuildHysteria2Options_PortsFromQuery(t *testing.T) {
 		t.Fatalf("unexpected server ports: %v", opts.ServerPorts)
 	}
 }
+
+func TestBuildNodeOutbound_ShadowSocksPlainUserinfo(t *testing.T) {
+	outbound, err := buildNodeOutbound("test-ss", "ss://aes-128-gcm:secret@example.com:8388#plain", false)
+	if err != nil {
+		t.Fatalf("build node outbound failed: %v", err)
+	}
+
+	opts, ok := outbound.Options.(*option.ShadowsocksOutboundOptions)
+	if !ok {
+		t.Fatalf("expected *option.ShadowsocksOutboundOptions, got %T", outbound.Options)
+	}
+	if opts.Method != "aes-128-gcm" {
+		t.Fatalf("expected method aes-128-gcm, got %q", opts.Method)
+	}
+	if opts.Password != "secret" {
+		t.Fatalf("expected password secret, got %q", opts.Password)
+	}
+}
