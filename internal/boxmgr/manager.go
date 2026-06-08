@@ -13,7 +13,6 @@ import (
 
 	"easy-proxies/internal/builder"
 	"easy-proxies/internal/config"
-	"easy-proxies/internal/geoip"
 	"easy-proxies/internal/monitor"
 	"easy-proxies/internal/outbound/pool"
 
@@ -56,7 +55,6 @@ type Manager struct {
 	currentBox    *box.Box
 	monitorMgr    *monitor.Manager
 	monitorServer *monitor.Server
-	geoRouter     *geoip.Router
 	cfg           *config.Config
 	monitorCfg    monitor.Config
 
@@ -163,11 +161,6 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	m.logger.Infof("sing-box instance started with %d nodes", len(cfg.Nodes))
 
-	// Start GeoIP router if enabled
-	if cfg.GeoIP.Enabled {
-		m.startGeoIPRouter(ctx, cfg)
-	}
-
 	return nil
 }
 
@@ -207,14 +200,6 @@ func (m *Manager) reload(newCfg *config.Config, initialProbeReason monitor.Probe
 			m.logger.Warnf("error closing old instance: %v", err)
 		}
 	}
-
-	// Stop GeoIP router before starting new box to release its port
-	m.mu.Lock()
-	if m.geoRouter != nil {
-		m.geoRouter.Stop()
-		m.geoRouter = nil
-	}
-	m.mu.Unlock()
 
 	// Give OS time to release ports
 	time.Sleep(500 * time.Millisecond)
@@ -274,18 +259,6 @@ func (m *Manager) reload(newCfg *config.Config, initialProbeReason monitor.Probe
 
 	m.logger.Infof("reload completed successfully with %d nodes", len(newCfg.Nodes))
 
-	// Restart GeoIP router with new pools
-	if newCfg.GeoIP.Enabled {
-		m.startGeoIPRouter(ctx, newCfg)
-	} else {
-		m.mu.Lock()
-		if m.geoRouter != nil {
-			m.geoRouter.Stop()
-			m.geoRouter = nil
-		}
-		m.mu.Unlock()
-	}
-
 	return nil
 }
 
@@ -336,10 +309,6 @@ func (m *Manager) Close() error {
 		m.monitorMgr = nil
 		m.healthCheckStarted = false
 	}
-	if m.geoRouter != nil {
-		m.geoRouter.Stop()
-		m.geoRouter = nil
-	}
 	m.baseCtx = nil
 	return err
 }
@@ -356,66 +325,6 @@ func (m *Manager) MonitorServer() *monitor.Server {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.monitorServer
-}
-
-// startGeoIPRouter starts the GeoIP region-routing HTTP proxy server.
-func (m *Manager) startGeoIPRouter(ctx context.Context, cfg *config.Config) {
-	// Stop existing router if any
-	m.mu.Lock()
-	if m.geoRouter != nil {
-		m.geoRouter.Stop()
-		m.geoRouter = nil
-	}
-	m.mu.Unlock()
-
-	geoipPort := cfg.GeoIP.Port
-	if geoipPort == 0 {
-		geoipPort = 1221 // Default GeoIP router port
-	}
-	// Avoid conflict with the pool listener port
-	if geoipPort == cfg.Listener.Port {
-		geoipPort = 1221
-		if geoipPort == cfg.Listener.Port {
-			geoipPort = cfg.Listener.Port + 1
-		}
-		log.Printf("⚠️  GeoIP port conflicts with listener port %d, using %d instead", cfg.Listener.Port, geoipPort)
-	}
-	geoipListen := cfg.GeoIP.Listen
-	if geoipListen == "" {
-		geoipListen = cfg.Listener.Address
-	}
-
-	routerCfg := geoip.RouterConfig{
-		Listen:   geoipListen,
-		Port:     geoipPort,
-		Username: cfg.Listener.Username,
-		Password: cfg.Listener.Password,
-	}
-
-	router := geoip.NewRouter(routerCfg, nil)
-
-	// Register region pool dialers
-	for _, region := range geoip.AllRegions() {
-		poolTag := fmt.Sprintf("pool-%s", region)
-		if dialer, ok := pool.GetDialer(poolTag); ok {
-			router.SetPool(region, dialer)
-			log.Printf("   GeoIP: registered pool %s for region /%s", poolTag, region)
-		}
-	}
-
-	// Register global pool dialer (for requests without region path)
-	if dialer, ok := pool.GetDialer(pool.Tag); ok {
-		router.SetGlobalPool(dialer)
-	}
-
-	if err := router.Start(ctx); err != nil {
-		m.logger.Warnf("failed to start GeoIP router: %v", err)
-		return
-	}
-
-	m.mu.Lock()
-	m.geoRouter = router
-	m.mu.Unlock()
 }
 
 // createBox builds a sing-box instance from config.

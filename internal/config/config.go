@@ -54,8 +54,8 @@ type LogConfig struct {
 type GeoIPConfig struct {
 	Enabled             bool          `yaml:"enabled"`                // 是否启用 GeoIP 地域分区
 	DatabasePath        string        `yaml:"database_path"`          // GeoLite2-Country.mmdb 文件路径
-	Listen              string        `yaml:"listen"`                 // GeoIP 路由监听地址，默认使用 listener 配置
-	Port                uint16        `yaml:"port"`                   // GeoIP 路由监听端口，默认 1221
+	Listen              string        `yaml:"listen"`                 // Deprecated: GeoIP now uses the main mixed listener
+	Port                uint16        `yaml:"port"`                   // Deprecated: GeoIP now uses the main mixed listener
 	AutoUpdateEnabled   bool          `yaml:"auto_update_enabled"`    // 是否启用自动更新数据库
 	AutoUpdateInterval  time.Duration `yaml:"auto_update_interval"`   // 自动更新间隔，默认 24 小时
 	ExitIPProbeMode     string        `yaml:"exit_ip_probe_mode"`     // 出口 IP 探测模式: interval / subscription_refresh

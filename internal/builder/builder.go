@@ -22,6 +22,8 @@ import (
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
+const poolInboundTag = "http-in"
+
 // Build converts high level config into sing-box Options tree.
 func Build(cfg *config.Config) (option.Options, error) {
 	baseOutbounds := make([]option.Outbound, 0, len(cfg.Nodes))
@@ -199,14 +201,14 @@ func Build(cfg *config.Config) (option.Options, error) {
 		}
 	}
 
-	// Build GeoIP region-based pool outbounds and routing
+	// Build GeoIP region-based pool outbounds and routing.
 	if cfg.GeoIP.Enabled && enablePoolInbound {
-		// Create dynamic region pools. Each pool sees all members but filters
-		// them by the runtime region learned from the observed egress IP.
+		// Each region pool sees all members, filters them by the runtime
+		// egress-IP region, then uses latency scheduling within the region.
 		for _, region := range geoip.AllRegions() {
 			regionPoolTag := fmt.Sprintf("pool-%s", region)
 			regionPoolOptions := poolout.Options{
-				Mode:              cfg.Pool.Mode,
+				Mode:              "latency",
 				Members:           memberTags,
 				FailureThreshold:  cfg.Pool.FailureThreshold,
 				BlacklistDuration: cfg.Pool.BlacklistDuration,
@@ -223,19 +225,32 @@ func Build(cfg *config.Config) (option.Options, error) {
 			})
 		}
 
+		for _, region := range geoip.AllRegions() {
+			username := geoip.RegionAuthUsername(cfg.Listener.Username, region)
+			regionPoolTag := fmt.Sprintf("pool-%s", region)
+			route.Rules = append(route.Rules, option.Rule{
+				Type: C.RuleTypeDefault,
+				DefaultOptions: option.DefaultRule{
+					RawDefaultRule: option.RawDefaultRule{
+						Inbound:  badoption.Listable[string]{poolInboundTag},
+						AuthUser: badoption.Listable[string]{username},
+					},
+					RuleAction: option.RuleAction{
+						Action: C.RuleActionTypeRoute,
+						RouteOptions: option.RouteActionOptions{
+							Outbound: regionPoolTag,
+						},
+					},
+				},
+			})
+		}
+
 		// Log GeoIP routing info
-		geoipPort := cfg.GeoIP.Port
-		if geoipPort == 0 {
-			geoipPort = 1221 // Default GeoIP router port
-		}
-		geoipListen := cfg.GeoIP.Listen
-		if geoipListen == "" {
-			geoipListen = cfg.Listener.Address
-		}
 		log.Println("🌐 GeoIP Region Routing Enabled:")
-		log.Printf("   Access via: http://%s:%d/{region}", geoipListen, geoipPort)
-		log.Println("   Available regions: /jp, /kr, /us, /hk, /tw, /sg, /other")
-		log.Println("   Default (no path): all nodes pool")
+		log.Printf("   Access via mixed proxy: %s:%d", cfg.Listener.Address, cfg.Listener.Port)
+		log.Printf("   Global user: %s", geoip.GlobalAuthUsername(cfg.Listener.Username))
+		log.Println("   Region users: jp, kr, us, hk, tw, sg, other (prefixed by listener username when set)")
+		log.Println("   Region pools use latency scheduling")
 	}
 
 	opts := option.Options{
@@ -263,15 +278,28 @@ func buildPoolInbound(cfg *config.Config) (option.Inbound, error) {
 			ListenPort: cfg.Listener.Port,
 		},
 	}
-	if cfg.Listener.Username != "" {
-		inboundOptions.Users = []auth.User{{
-			Username: cfg.Listener.Username,
+	seenUsers := make(map[string]bool)
+	addUser := func(username string) {
+		username = strings.TrimSpace(username)
+		if username == "" || seenUsers[username] {
+			return
+		}
+		inboundOptions.Users = append(inboundOptions.Users, auth.User{
+			Username: username,
 			Password: cfg.Listener.Password,
-		}}
+		})
+		seenUsers[username] = true
+	}
+	addUser(cfg.Listener.Username)
+	if cfg.GeoIP.Enabled {
+		addUser(geoip.GlobalAuthUsername(cfg.Listener.Username))
+		for _, region := range geoip.AllRegions() {
+			addUser(geoip.RegionAuthUsername(cfg.Listener.Username, region))
+		}
 	}
 	inbound := option.Inbound{
 		Type:    C.TypeMixed,
-		Tag:     "http-in",
+		Tag:     poolInboundTag,
 		Options: inboundOptions,
 	}
 	return inbound, nil

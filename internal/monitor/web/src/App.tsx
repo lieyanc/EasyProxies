@@ -2642,21 +2642,6 @@ function SettingsView({
                 onChange={(event) => patch("geoip", { database_path: event.target.value })}
               />
             </Field>
-            <Field label="路由监听地址">
-              <Input
-                value={form.geoip.listen}
-                onChange={(event) => patch("geoip", { listen: event.target.value })}
-              />
-            </Field>
-            <Field label="路由端口">
-              <Input
-                type="number"
-                min={1}
-                max={65535}
-                value={form.geoip.port}
-                onChange={(event) => patch("geoip", { port: event.target.value })}
-              />
-            </Field>
             <Field label="更新间隔">
               <Input
                 value={form.geoip.auto_update_interval}

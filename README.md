@@ -141,7 +141,9 @@ See [config.example.yaml](config.example.yaml) for the full documented configura
 
 ### Overview
 
-When GeoIP is enabled, easy-proxies automatically classifies your proxy nodes by geographic region and provides a separate HTTP proxy endpoint that lets you route traffic through nodes in a specific country/region.
+When GeoIP is enabled, easy-proxies automatically classifies your proxy
+nodes by geographic region and routes HTTP/SOCKS traffic through the
+same mixed proxy entry by matching the authenticated username.
 
 ### Supported Regions
 
@@ -161,8 +163,6 @@ When GeoIP is enabled, easy-proxies automatically classifies your proxy nodes by
 geoip:
   enabled: true
   database_path: "./GeoLite2-Country.mmdb"
-  listen: "0.0.0.0"          # defaults to listener.address if omitted
-  port: 1221                  # defaults to listener.port if omitted
   auto_update_enabled: true   # auto-update the GeoIP database
   auto_update_interval: 24h   # check interval
   download_proxies:           # optional, tried from top to bottom
@@ -170,7 +170,11 @@ geoip:
     - "socks5://127.0.0.1:7891"
 ```
 
-The GeoIP router reuses the `listener.username` and `listener.password` for proxy authentication.
+Region usernames reuse `listener.password`. If `listener.username` is
+set, region users are prefixed with it, for example `user-jp`,
+`user-us`, and the base `user` still selects the global pool. If
+`listener.username` is empty, region users are simply `jp`, `us`,
+`hk`, and so on, with `all` selecting the global pool.
 
 Key behaviors:
 - The GeoIP database (MaxMind GeoLite2-Country) is **auto-downloaded** on first startup
@@ -178,45 +182,41 @@ Key behaviors:
 - Auto-update is enabled by default (checks every 24h) with hot-reload -- no restart needed
 - Node region classification is learned during health checks from each node's observed public egress IP
 - Nodes whose egress IP cannot be detected or looked up are placed in the `other` category
+- Each region pool uses latency scheduling, so requests pick the
+  lowest-latency healthy node within the selected region
 
 ### How to Use
 
-The GeoIP router is an HTTP proxy that listens on its own port. You select a region by adding a path prefix to your request.
+Use the normal pool listener. Select a region with the proxy username.
 
 #### HTTP Requests
 
-Format: `http://<geoip_host>:<geoip_port>/<region>/`
+Format: `http://<region-user>:<password>@<host>:<listener_port>`
 
 ```bash
 # Route through Japanese nodes
-curl -x http://user:pass@localhost:1221/jp/ http://example.com
+curl -x http://user-jp:pass@localhost:2323 http://example.com
 
 # Route through US nodes
-curl -x http://user:pass@localhost:1221/us/ http://example.com
+curl -x http://user-us:pass@localhost:2323 http://example.com
 
 # Route through Hong Kong nodes
-curl -x http://user:pass@localhost:1221/hk/ http://example.com
+curl -x http://user-hk:pass@localhost:2323 http://example.com
 
 # Route through Singapore nodes
-curl -x http://user:pass@localhost:1221/sg/ http://example.com
+curl -x http://user-sg:pass@localhost:2323 http://example.com
 
-# No region prefix = use global pool (all nodes)
-curl -x http://user:pass@localhost:1221/ http://example.com
+# Base username = use global pool (all nodes)
+curl -x http://user:pass@localhost:2323 http://example.com
 ```
 
-#### HTTPS Requests (CONNECT Tunnel)
+#### SOCKS5 Requests
 
-For HTTPS, the region prefix goes before the target host in the CONNECT request:
+The same users work with SOCKS5 on the same mixed listener:
 
 ```bash
-# Route HTTPS through Japanese nodes
-https_proxy=http://user:pass@localhost:1221/jp/ curl https://www.google.com
-
-# Route HTTPS through US nodes
-https_proxy=http://user:pass@localhost:1221/us/ curl https://www.google.com
-
-# No region prefix = use global pool
-https_proxy=http://user:pass@localhost:1221/ curl https://www.google.com
+curl --socks5-hostname user-jp:pass@localhost:2323 https://www.google.com
+curl --socks5-hostname user-us:pass@localhost:2323 https://www.google.com
 ```
 
 #### Using with Applications
@@ -225,21 +225,21 @@ https_proxy=http://user:pass@localhost:1221/ curl https://www.google.com
 
 ```bash
 # Use Japanese nodes for all traffic
-export http_proxy=http://user:pass@your-server:1221/jp/
-export https_proxy=http://user:pass@your-server:1221/jp/
+export http_proxy=http://user-jp:pass@your-server:2323
+export https_proxy=http://user-jp:pass@your-server:2323
 
 # Use global pool (all nodes)
-export http_proxy=http://user:pass@your-server:1221/
-export https_proxy=http://user:pass@your-server:1221/
+export http_proxy=http://user:pass@your-server:2323
+export https_proxy=http://user:pass@your-server:2323
 ```
 
 **Browser proxy extensions (SwitchyOmega, FoxyProxy, etc.):**
 
 - Protocol: HTTP
 - Server: your-server-ip
-- Port: 1221
-- Username/Password: as configured in `listener`
-- For region-specific routing: set the proxy URL path to include the region prefix (e.g., `/jp/`)
+- Port: `listener.port`
+- Username: base user for global, or region user such as `user-jp`
+- Password: `listener.password`
 
 **Python requests:**
 
@@ -247,8 +247,8 @@ export https_proxy=http://user:pass@your-server:1221/
 import requests
 
 proxies = {
-    "http": "http://user:pass@your-server:1221/jp/",
-    "https": "http://user:pass@your-server:1221/jp/",
+    "http": "http://user-jp:pass@your-server:2323",
+    "https": "http://user-jp:pass@your-server:2323",
 }
 r = requests.get("http://example.com", proxies=proxies)
 ```
@@ -256,7 +256,7 @@ r = requests.get("http://example.com", proxies=proxies)
 **Go net/http:**
 
 ```go
-proxyURL, _ := url.Parse("http://user:pass@your-server:1221/jp/")
+proxyURL, _ := url.Parse("http://user-jp:pass@your-server:2323")
 client := &http.Client{
     Transport: &http.Transport{
         Proxy: http.ProxyURL(proxyURL),
@@ -269,9 +269,9 @@ resp, err := client.Get("http://example.com")
 
 1. Health checks dial through each node and detect the node's public egress IP
 2. The egress IP is looked up in the MaxMind GeoLite2-Country database and stored on the node
-3. The GeoIP router listens on its own port and inspects the request path for a region prefix
-4. Matching requests are routed through a dynamic region pool that filters nodes by the latest egress-IP region; unmatched requests use the global pool
-5. Each region pool uses the same scheduling algorithm configured in the `pool` section
+3. The mixed proxy listener records the authenticated user for HTTP and SOCKS requests
+4. `auth_user` route rules send region users to dynamic region pools
+5. Each region pool filters nodes by latest egress-IP region and uses latency scheduling
 
 ## Supported Protocols
 
@@ -418,9 +418,8 @@ Fetch the latest release asset with GitHub CLI:
 
 | Port | Usage |
 |------|-------|
-| 2323 | Pool proxy entry (pool/hybrid mode) |
+| 2323 | Pool and GeoIP username routing entry (pool/hybrid mode) |
 | 9091 | WebUI and Management API |
-| 1221 | GeoIP region router (when enabled, configurable) |
 | 24000+ | Multi-port mode (one per node) |
 
 ## Docker Deployment (Optional)

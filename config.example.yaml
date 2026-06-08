@@ -111,7 +111,8 @@ dns:
 # ───────────────────────────────────────────────────────────────
 # GeoIP 地域分区配置（可选）
 # ───────────────────────────────────────────────────────────────
-# 启用后会按节点真实出口 IP 打地域标签（jp/kr/us/hk/tw/sg/other），用于 WebUI 统计和筛选。
+# 启用后会按节点真实出口 IP 打地域标签（jp/kr/us/hk/tw/sg/other），
+# 并在单端口 mixed 入口上用认证用户名选择地区。每个地区池固定按延迟优先选择节点。
 geoip:
   enabled: true                      # 是否启用 GeoIP 地域标记
   database_path: "./GeoLite2-Country.mmdb"           # GeoIP 数据库路径（首次启动时自动下载）
@@ -126,6 +127,8 @@ geoip:
   # 注意：
   #   - 首次启动会自动从 GitHub 下载 GeoIP 数据库（约 9MB）
   #   - 地域识别随健康检查执行，以节点真实出口公网 IP 为准
+  #   - 如果 listener.username = "user"，则 user-jp/user-us/... 分别选择地区，user 选择全局池
+  #   - 如果 listener.username 为空，则 jp/us/... 分别选择地区，all 选择全局池
   #   - 配置 download_proxies 后会优先使用第一个代理，失败再尝试下一个
   #   - 启用 auto_update_enabled 后，数据库会定期自动更新，无需重启服务
   #   - 更新过程采用热重载，不会中断现有连接

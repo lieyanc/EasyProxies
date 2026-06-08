@@ -534,6 +534,10 @@ func (s *Server) handleAddresses(w http.ResponseWriter, r *http.Request) {
 
 	if showPoolEntry && listenerCfg.Port > 0 {
 		host := publicProxyHost(listenerCfg.Address, externalIP, requestHost)
+		poolUsername := listenerCfg.Username
+		if geoIPCfg.Enabled {
+			poolUsername = geoip.GlobalAuthUsername(listenerCfg.Username)
+		}
 		entries = append(entries,
 			addressEntry{
 				ID:          "pool-http",
@@ -541,7 +545,7 @@ func (s *Server) handleAddresses(w http.ResponseWriter, r *http.Request) {
 				Label:       "Pool 代理池",
 				Description: "单端口入口",
 				Protocol:    "http",
-				URL:         proxyURL("http", listenerCfg.Username, listenerCfg.Password, host, listenerCfg.Port, ""),
+				URL:         proxyURL("http", poolUsername, listenerCfg.Password, host, listenerCfg.Port, ""),
 				Port:        listenerCfg.Port,
 			},
 			addressEntry{
@@ -550,43 +554,39 @@ func (s *Server) handleAddresses(w http.ResponseWriter, r *http.Request) {
 				Label:       "Pool 代理池",
 				Description: "单端口入口",
 				Protocol:    "socks5",
-				URL:         proxyURL("socks5", listenerCfg.Username, listenerCfg.Password, host, listenerCfg.Port, ""),
+				URL:         proxyURL("socks5", poolUsername, listenerCfg.Password, host, listenerCfg.Port, ""),
 				Port:        listenerCfg.Port,
 			},
 		)
 	}
 
-	if geoIPCfg.Enabled {
-		geoIPPort := effectiveGeoIPPort(geoIPCfg.Port, listenerCfg.Port)
-		if geoIPPort > 0 {
-			geoIPListen := geoIPCfg.Listen
-			if geoIPListen == "" {
-				geoIPListen = listenerCfg.Address
-			}
-			host := publicProxyHost(geoIPListen, externalIP, requestHost)
-			entries = append(entries, addressEntry{
-				ID:          "geoip-all-http",
-				Kind:        "geoip",
-				Label:       "GeoIP 全局",
-				Description: "地域路由入口",
-				Protocol:    "http",
-				URL:         proxyURL("http", listenerCfg.Username, listenerCfg.Password, host, geoIPPort, ""),
-				Port:        geoIPPort,
-				Region:      "all",
-			})
-			for _, region := range geoip.AllRegions() {
-				regionPath := "/" + region + "/"
-				entries = append(entries, addressEntry{
+	if geoIPCfg.Enabled && showPoolEntry && listenerCfg.Port > 0 {
+		host := publicProxyHost(listenerCfg.Address, externalIP, requestHost)
+		for _, region := range geoip.AllRegions() {
+			username := geoip.RegionAuthUsername(listenerCfg.Username, region)
+			label := fmt.Sprintf("GeoIP %s", strings.ToUpper(region))
+			entries = append(entries,
+				addressEntry{
 					ID:          fmt.Sprintf("geoip-%s-http", region),
 					Kind:        "geoip",
-					Label:       fmt.Sprintf("GeoIP %s", strings.ToUpper(region)),
-					Description: "地域路由入口",
+					Label:       label,
+					Description: "用户名地域入口",
 					Protocol:    "http",
-					URL:         proxyURL("http", listenerCfg.Username, listenerCfg.Password, host, geoIPPort, regionPath),
-					Port:        geoIPPort,
+					URL:         proxyURL("http", username, listenerCfg.Password, host, listenerCfg.Port, ""),
+					Port:        listenerCfg.Port,
 					Region:      region,
-				})
-			}
+				},
+				addressEntry{
+					ID:          fmt.Sprintf("geoip-%s-socks5", region),
+					Kind:        "geoip",
+					Label:       label,
+					Description: "用户名地域入口",
+					Protocol:    "socks5",
+					URL:         proxyURL("socks5", username, listenerCfg.Password, host, listenerCfg.Port, ""),
+					Port:        listenerCfg.Port,
+					Region:      region,
+				},
+			)
 		}
 	}
 
@@ -686,20 +686,6 @@ func proxyURL(scheme, username, password, host string, port uint16, urlPath stri
 		}
 	}
 	return u.String()
-}
-
-func effectiveGeoIPPort(configuredPort, listenerPort uint16) uint16 {
-	geoIPPort := configuredPort
-	if geoIPPort == 0 {
-		geoIPPort = 1221
-	}
-	if geoIPPort == listenerPort {
-		geoIPPort = 1221
-		if geoIPPort == listenerPort {
-			geoIPPort = listenerPort + 1
-		}
-	}
-	return geoIPPort
 }
 
 func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
@@ -1010,7 +996,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 //   - scheme=socks5
 //   - scheme=all    (同时导出 HTTP 和 SOCKS5)
 //
-// 在 pool/hybrid 模式下，还会导出 Pool 代理池入口和 GeoIP 分区路由入口。
+// 在 pool/hybrid 模式下，还会导出 Pool 代理池入口和 GeoIP 用户名分区入口。
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -1053,13 +1039,13 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 				poolAddr = extIP
 			}
 		}
-		var poolAuth string
-		if listenerCfg.Username != "" && listenerCfg.Password != "" {
-			poolAuth = fmt.Sprintf("%s:%s@", listenerCfg.Username, listenerCfg.Password)
+		poolUsername := listenerCfg.Username
+		if geoipCfg.Enabled {
+			poolUsername = geoip.GlobalAuthUsername(listenerCfg.Username)
 		}
 		lines = append(lines, "# Pool 代理池入口")
-		poolHTTP := fmt.Sprintf("http://%s%s:%d", poolAuth, poolAddr, listenerCfg.Port)
-		poolSocks := fmt.Sprintf("socks5://%s%s:%d", poolAuth, poolAddr, listenerCfg.Port)
+		poolHTTP := proxyURL("http", poolUsername, listenerCfg.Password, poolAddr, listenerCfg.Port, "")
+		poolSocks := proxyURL("socks5", poolUsername, listenerCfg.Password, poolAddr, listenerCfg.Port, "")
 		switch scheme {
 		case "http":
 			lines = append(lines, poolHTTP)
@@ -1075,31 +1061,40 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// GeoIP 分区路由入口
-	if geoipCfg.Enabled && geoipCfg.Port > 0 {
-		geoAddr := geoipCfg.Listen
+	// GeoIP 用户名分区路由入口
+	if geoipCfg.Enabled && (mode == "pool" || mode == "hybrid") && listenerCfg.Port > 0 {
+		geoAddr := listenerCfg.Address
 		if geoAddr == "" || geoAddr == "0.0.0.0" || geoAddr == "::" {
 			if extIP, _, _, _ := s.getSettings(); extIP != "" {
 				geoAddr = extIP
 			}
 		}
-		var geoAuth string
-		if listenerCfg.Username != "" && listenerCfg.Password != "" {
-			geoAuth = fmt.Sprintf("%s:%s@", listenerCfg.Username, listenerCfg.Password)
-		}
-		regions := geoip.AllRegions()
-		var pathParts []string
-		for _, r := range regions {
-			if r != "other" {
-				pathParts = append(pathParts, fmt.Sprintf("/%s/", r))
+		lines = append(lines, "# GeoIP 用户名分区入口")
+		for _, r := range geoip.AllRegions() {
+			username := geoip.RegionAuthUsername(listenerCfg.Username, r)
+			regionHTTP := proxyURL("http", username, listenerCfg.Password, geoAddr, listenerCfg.Port, "")
+			regionSocks := proxyURL("socks5", username, listenerCfg.Password, geoAddr, listenerCfg.Port, "")
+			switch scheme {
+			case "http":
+				if !seen[regionHTTP] {
+					lines = append(lines, regionHTTP)
+					seen[regionHTTP] = true
+				}
+			case "socks5":
+				if !seen[regionSocks] {
+					lines = append(lines, regionSocks)
+					seen[regionSocks] = true
+				}
+			case "all":
+				if !seen[regionHTTP] {
+					lines = append(lines, regionHTTP)
+					seen[regionHTTP] = true
+				}
+				if !seen[regionSocks] {
+					lines = append(lines, regionSocks)
+					seen[regionSocks] = true
+				}
 			}
-		}
-		lines = append(lines, fmt.Sprintf("# GeoIP 分区路由入口 (支持路径: %s)", strings.Join(pathParts, " ")))
-		// GeoIP 路由仅支持 HTTP
-		geoURI := fmt.Sprintf("http://%s%s:%d", geoAuth, geoAddr, geoipCfg.Port)
-		if !seen[geoURI] {
-			lines = append(lines, geoURI)
-			seen[geoURI] = true
 		}
 	}
 

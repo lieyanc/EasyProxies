@@ -43,6 +43,28 @@ func TestDownloadAttemptsUseDirectWhenNoProxyConfigured(t *testing.T) {
 	}
 }
 
+func TestRegionAuthUsername(t *testing.T) {
+	tests := []struct {
+		name string
+		base string
+		code string
+		want string
+	}{
+		{name: "global with base", base: "user", code: RegionAll, want: "user"},
+		{name: "region with base", base: "user", code: RegionJP, want: "user-jp"},
+		{name: "global without base", code: RegionAll, want: "all"},
+		{name: "region without base", code: RegionUS, want: "us"},
+		{name: "trim and normalize", base: " user ", code: " JP ", want: "user-jp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RegionAuthUsername(tt.base, tt.code); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestDownloadDatabaseWithOptionsRetriesProxiesInOrder(t *testing.T) {
 	oldDownloadURL := geoIPDownloadURL
 	geoIPDownloadURL = "http://geoip.test/GeoLite2-Country.mmdb"

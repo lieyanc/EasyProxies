@@ -30,6 +30,7 @@ const (
 	RegionTW    = "tw"
 	RegionSG    = "sg"
 	RegionOther = "other"
+	RegionAll   = "all"
 )
 
 // Default GeoIP database download URL
@@ -727,6 +728,28 @@ func isoCodeToRegion(isoCode string) string {
 // AllRegions returns all supported region codes
 func AllRegions() []string {
 	return []string{RegionJP, RegionKR, RegionUS, RegionHK, RegionTW, RegionSG, RegionOther}
+}
+
+// GlobalAuthUsername returns the username used for the all-regions pool.
+func GlobalAuthUsername(baseUsername string) string {
+	baseUsername = strings.TrimSpace(baseUsername)
+	if baseUsername != "" {
+		return baseUsername
+	}
+	return RegionAll
+}
+
+// RegionAuthUsername returns the auth username that selects a region pool.
+func RegionAuthUsername(baseUsername, region string) string {
+	baseUsername = strings.TrimSpace(baseUsername)
+	region = strings.ToLower(strings.TrimSpace(region))
+	if region == "" || region == RegionAll {
+		return GlobalAuthUsername(baseUsername)
+	}
+	if baseUsername == "" {
+		return region
+	}
+	return baseUsername + "-" + region
 }
 
 // RegionName returns the display name for a region code
