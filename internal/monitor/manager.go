@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"runtime"
 	"sort"
 	"strconv"
@@ -102,6 +103,12 @@ type entry struct {
 	mu               sync.RWMutex
 }
 
+type cachedGeoInfo struct {
+	ExitIP  string
+	Region  string
+	Country string
+}
+
 // Manager aggregates all node states for the UI/API.
 type Manager struct {
 	cfg          Config
@@ -109,6 +116,7 @@ type Manager struct {
 	probeReady   bool
 	mu           sync.RWMutex
 	nodes        map[string]*entry
+	geoCache     map[string]cachedGeoInfo
 	geoMu        sync.RWMutex
 	geoLookup    *geoip.Lookup
 	ctx          context.Context
@@ -128,10 +136,11 @@ type Logger interface {
 func NewManager(cfg Config) (*Manager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
-		cfg:    cfg,
-		nodes:  make(map[string]*entry),
-		ctx:    ctx,
-		cancel: cancel,
+		cfg:      cfg,
+		nodes:    make(map[string]*entry),
+		geoCache: make(map[string]cachedGeoInfo),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
 	if cfg.ProbeTarget != "" {
 		target := cfg.ProbeTarget
@@ -459,6 +468,7 @@ func parsePort(value string) uint16 {
 func (m *Manager) Register(info NodeInfo) *EntryHandle {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	info = m.withCachedGeoInfoLocked(info)
 	e, ok := m.nodes[info.Tag]
 	if !ok {
 		e = &entry{
@@ -467,7 +477,7 @@ func (m *Manager) Register(info NodeInfo) *EntryHandle {
 		}
 		m.nodes[info.Tag] = e
 	} else {
-		e.info = info
+		e.updateStaticInfo(info)
 	}
 	return &EntryHandle{ref: e}
 }
@@ -477,7 +487,92 @@ func (m *Manager) Register(info NodeInfo) *EntryHandle {
 func (m *Manager) ClearNodes() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.rememberGeoInfoLocked()
 	m.nodes = make(map[string]*entry)
+}
+
+func (m *Manager) rememberGeoInfoLocked() {
+	nextCache := make(map[string]cachedGeoInfo)
+	for _, e := range m.nodes {
+		snap := e.snapshot()
+		info := cachedGeoInfo{
+			ExitIP:  snap.ExitIP,
+			Region:  snap.Region,
+			Country: snap.Country,
+		}
+		if !hasKnownGeoInfo(info) {
+			continue
+		}
+		for _, key := range geoCacheKeys(snap.NodeInfo) {
+			nextCache[key] = info
+		}
+	}
+	m.geoCache = nextCache
+}
+
+func (m *Manager) withCachedGeoInfoLocked(info NodeInfo) NodeInfo {
+	if !hasKnownNodeGeoInfo(info) {
+		for _, key := range geoCacheKeys(info) {
+			cached, ok := m.geoCache[key]
+			if !ok || !hasKnownGeoInfo(cached) {
+				continue
+			}
+			info.ExitIP = cached.ExitIP
+			info.Region = cached.Region
+			info.Country = cached.Country
+			break
+		}
+	}
+	if info.Region == "" {
+		info.Region = geoip.RegionOther
+	}
+	if info.Country == "" {
+		info.Country = "Unknown"
+	}
+	return info
+}
+
+func geoCacheKeys(info NodeInfo) []string {
+	keys := make([]string, 0, 1)
+	if uriKey := normalizeURIKey(info.URI); uriKey != "" {
+		keys = append(keys, "uri:"+uriKey)
+	} else if info.Tag != "" {
+		keys = append(keys, "tag:"+info.Tag)
+	}
+	return keys
+}
+
+func normalizeURIKey(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if parsed.Fragment != "" {
+		parsed.Fragment = ""
+	}
+	return parsed.String()
+}
+
+func hasKnownGeoInfo(info cachedGeoInfo) bool {
+	return info.ExitIP != "" || isKnownRegion(info.Region) || isKnownCountry(info.Country)
+}
+
+func hasKnownNodeGeoInfo(info NodeInfo) bool {
+	return info.ExitIP != "" || isKnownRegion(info.Region) || isKnownCountry(info.Country)
+}
+
+func isKnownRegion(region string) bool {
+	region = strings.TrimSpace(strings.ToLower(region))
+	return region != "" && region != geoip.RegionOther
+}
+
+func isKnownCountry(country string) bool {
+	country = strings.TrimSpace(country)
+	return country != "" && !strings.EqualFold(country, "Unknown")
 }
 
 // DestinationForProbe exposes the configured destination for health checks.
@@ -746,18 +841,57 @@ func (e *entry) recordProbeLatency(d time.Duration) {
 	e.mu.Unlock()
 }
 
+func (e *entry) updateStaticInfo(info NodeInfo) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	info = mergeGeoInfo(info, e.info)
+	e.info = info
+}
+
 func (e *entry) updateExitInfo(exitIP, region, country string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.info.ExitIP = exitIP
+	e.info.Region, e.info.Country = mergeResolvedGeo(region, country, e.info.Region, e.info.Country)
+}
+
+func mergeGeoInfo(next, previous NodeInfo) NodeInfo {
+	if next.ExitIP == "" {
+		next.ExitIP = previous.ExitIP
+	}
+	if !isKnownRegion(next.Region) && isKnownRegion(previous.Region) {
+		next.Region = previous.Region
+	}
+	if !isKnownCountry(next.Country) && isKnownCountry(previous.Country) {
+		next.Country = previous.Country
+	}
+	if next.Region == "" {
+		next.Region = geoip.RegionOther
+	}
+	if next.Country == "" {
+		next.Country = "Unknown"
+	}
+	return next
+}
+
+func mergeResolvedGeo(region, country, previousRegion, previousCountry string) (string, string) {
+	region = strings.TrimSpace(strings.ToLower(region))
+	country = strings.TrimSpace(country)
 	if region == "" {
 		region = geoip.RegionOther
 	}
 	if country == "" {
 		country = "Unknown"
 	}
-	e.info.ExitIP = exitIP
-	e.info.Region = region
-	e.info.Country = country
+	if region == geoip.RegionOther && !isKnownCountry(country) {
+		if isKnownRegion(previousRegion) {
+			region = previousRegion
+		}
+		if isKnownCountry(previousCountry) {
+			country = previousCountry
+		}
+	}
+	return region, country
 }
 
 // RecordFailure updates failure counters.
