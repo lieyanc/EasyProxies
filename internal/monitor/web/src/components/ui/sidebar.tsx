@@ -2,7 +2,7 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-const SIDEBAR_WIDTH = "16rem";
+const SIDEBAR_WIDTH = "17rem";
 
 const SidebarProvider = ({
   className,
@@ -30,7 +30,7 @@ const Sidebar = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement>>
     <aside
       ref={ref}
       className={cn(
-        "h-full w-[var(--sidebar-width)] shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+        "h-full min-h-0 w-[var(--sidebar-width)] shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
         "hidden flex-col md:flex",
         className
       )}
@@ -53,7 +53,7 @@ SidebarInset.displayName = "SidebarInset";
 
 const SidebarHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("flex min-h-16 items-center gap-2 px-4", className)} {...props} />
+    <div ref={ref} className={cn("flex min-h-16 shrink-0 items-center gap-3 px-4", className)} {...props} />
   )
 );
 SidebarHeader.displayName = "SidebarHeader";
@@ -62,7 +62,7 @@ const SidebarContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTM
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn("scrollbar-thin flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-2", className)}
+      className={cn("scrollbar-thin flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden p-3", className)}
       {...props}
     />
   )
@@ -71,7 +71,7 @@ SidebarContent.displayName = "SidebarContent";
 
 const SidebarFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("border-t border-sidebar-border p-3", className)} {...props} />
+    <div ref={ref} className={cn("shrink-0 border-t border-sidebar-border p-3", className)} {...props} />
   )
 );
 SidebarFooter.displayName = "SidebarFooter";
@@ -117,7 +117,7 @@ const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonP
     <button
       ref={ref}
       className={cn(
-        "flex h-8 w-full items-center gap-2 overflow-hidden rounded-md px-2 text-left text-sm outline-none",
+        "flex h-9 w-full items-center gap-2.5 overflow-hidden rounded-md px-2.5 text-left text-sm outline-none",
         "transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
         "focus-visible:ring-1 focus-visible:ring-sidebar-ring disabled:pointer-events-none disabled:opacity-50",
         isActive &&

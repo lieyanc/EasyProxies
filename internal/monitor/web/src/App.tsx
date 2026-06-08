@@ -1224,16 +1224,16 @@ function Sidebar({
       </SidebarContent>
       <SidebarFooter>
         <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-3 rounded-md border border-sidebar-border bg-sidebar px-3 py-2 text-xs">
-            <span className="text-sidebar-foreground/60">Version</span>
+          <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-sidebar-border bg-sidebar px-3 py-2 text-xs">
+            <span className="shrink-0 text-sidebar-foreground/60">Version</span>
             <span className="min-w-0 truncate rounded-sm bg-sidebar-primary/10 px-2 py-0.5 font-mono font-semibold text-sidebar-primary">
               {currentVersion}
             </span>
           </div>
-          <div className="flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent px-3 py-2 text-xs text-sidebar-foreground/60">
-            <Github className="h-3.5 w-3.5 text-sidebar-primary" />
-            <span className="font-medium text-sidebar-foreground">{stars}</span>
-            <span>Stars</span>
+          <div className="flex min-w-0 items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent px-3 py-2 text-xs text-sidebar-foreground/60">
+            <Github className="h-3.5 w-3.5 shrink-0 text-sidebar-primary" />
+            <span className="min-w-0 truncate font-medium text-sidebar-foreground">{stars}</span>
+            <span className="shrink-0">Stars</span>
           </div>
         </div>
       </SidebarFooter>
@@ -3018,43 +3018,38 @@ function NodeTable({
         id: "actions",
         enableHiding: false,
         cell: ({ row }) => (
-          <DropdownMenu>
+          <div className="flex min-w-[152px] items-center gap-2">
             <Tooltip>
               <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8">
-                    <MoreHorizontal className="h-4 w-4" />
-                    <span className="sr-only">打开菜单</span>
-                  </Button>
-                </DropdownMenuTrigger>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onProbe(row.original.tag)}
+                >
+                  <Zap className="h-4 w-4" />
+                  探测
+                </Button>
               </TooltipTrigger>
-              <TooltipContent>操作</TooltipContent>
+              <TooltipContent>立即探测节点延迟</TooltipContent>
             </Tooltip>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>操作</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => onProbe(row.original.tag)}>
-                <Zap className="h-4 w-4" />
-                探测
-              </DropdownMenuItem>
-              {row.original.blacklisted ? (
-                <DropdownMenuItem onClick={() => onRelease(row.original.tag)}>
-                  <RotateCcw className="h-4 w-4" />
-                  解封
-                </DropdownMenuItem>
-              ) : (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={() => onBlacklist(row.original.tag)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    拉黑
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            {row.original.blacklisted ? (
+              <Button type="button" size="sm" onClick={() => onRelease(row.original.tag)}>
+                <RotateCcw className="h-4 w-4" />
+                解封
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                onClick={() => onBlacklist(row.original.tag)}
+              >
+                <Trash2 className="h-4 w-4" />
+                拉黑
+              </Button>
+            )}
+          </div>
         )
       }
     ],
