@@ -123,6 +123,8 @@ management:
   enabled: true
   listen: 127.0.0.1:9091
   probe_target: http://cp.cloudflare.com/generate_204
+  health_check_interval: 5m
+  health_check_concurrency: 0  # 0 means CPU core count
   password: ""
 
 dns:

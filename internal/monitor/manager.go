@@ -20,17 +20,18 @@ import (
 
 // Config mirrors user settings needed by the monitoring server.
 type Config struct {
-	Enabled             bool
-	Listen              string
-	ProbeTarget         string
-	HealthCheckInterval time.Duration
-	Password            string
-	ProxyUsername       string // 代理池的用户名（用于导出）
-	ProxyPassword       string // 代理池的密码（用于导出）
-	ExternalIP          string // 外部 IP 地址，用于导出时替换 0.0.0.0
-	SkipCertVerify      bool   // 全局跳过 SSL 证书验证
-	ExitIPProbeMode     string
-	ExitIPProbeInterval time.Duration
+	Enabled                bool
+	Listen                 string
+	ProbeTarget            string
+	HealthCheckInterval    time.Duration
+	HealthCheckConcurrency int
+	Password               string
+	ProxyUsername          string // 代理池的用户名（用于导出）
+	ProxyPassword          string // 代理池的密码（用于导出）
+	ExternalIP             string // 外部 IP 地址，用于导出时替换 0.0.0.0
+	SkipCertVerify         bool   // 全局跳过 SSL 证书验证
+	ExitIPProbeMode        string
+	ExitIPProbeInterval    time.Duration
 }
 
 // NodeInfo is static metadata about a proxy entry.
@@ -294,10 +295,7 @@ func (m *Manager) probeAllNodesWithContext(parent context.Context, timeout time.
 		m.logger.Info("starting health check for ", len(entries), " nodes")
 	}
 
-	workerLimit := runtime.NumCPU() * 2
-	if workerLimit < 8 {
-		workerLimit = 8
-	}
+	workerLimit := m.HealthCheckConcurrency()
 	sem := make(chan struct{}, workerLimit)
 	var wg sync.WaitGroup
 	var availableCount atomic.Int32
@@ -405,6 +403,19 @@ func (m *Manager) ExitIPProbeInterval() time.Duration {
 	return interval
 }
 
+func (m *Manager) SetHealthCheckConcurrency(concurrency int) {
+	m.mu.Lock()
+	m.cfg.HealthCheckConcurrency = normalizeHealthCheckConcurrency(concurrency)
+	m.mu.Unlock()
+}
+
+func (m *Manager) HealthCheckConcurrency() int {
+	m.mu.RLock()
+	concurrency := m.cfg.HealthCheckConcurrency
+	m.mu.RUnlock()
+	return normalizeHealthCheckConcurrency(concurrency)
+}
+
 // ShouldUpdateExitIP reports whether this probe may update GeoIP egress data.
 // The boolean return pair is (shouldUpdate, throttleByInterval).
 func (m *Manager) ShouldUpdateExitIP(ctx context.Context) (bool, bool) {
@@ -423,6 +434,17 @@ func normalizeExitIPProbeMode(mode string) string {
 	default:
 		return "interval"
 	}
+}
+
+func normalizeHealthCheckConcurrency(concurrency int) int {
+	if concurrency > 0 {
+		return concurrency
+	}
+	n := runtime.NumCPU()
+	if n < 1 {
+		return 1
+	}
+	return n
 }
 
 func parsePort(value string) uint16 {

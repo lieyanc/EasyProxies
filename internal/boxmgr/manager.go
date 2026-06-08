@@ -58,10 +58,11 @@ type Manager struct {
 	cfg           *config.Config
 	monitorCfg    monitor.Config
 
-	drainTimeout        time.Duration
-	healthCheckInterval time.Duration
-	minAvailableNodes   int
-	logger              Logger
+	drainTimeout           time.Duration
+	healthCheckInterval    time.Duration
+	healthCheckConcurrency int
+	minAvailableNodes      int
+	logger                 Logger
 
 	baseCtx            context.Context
 	healthCheckStarted bool
@@ -574,6 +575,15 @@ func (m *Manager) applyConfigSettings(cfg *config.Config) {
 		m.healthCheckInterval = cfg.Management.HealthCheckInterval
 	} else if m.healthCheckInterval == 0 {
 		m.healthCheckInterval = defaultHealthCheckInterval
+	}
+	if cfg.Management.HealthCheckConcurrency > 0 {
+		m.healthCheckConcurrency = cfg.Management.HealthCheckConcurrency
+	} else if m.healthCheckConcurrency == 0 {
+		m.healthCheckConcurrency = config.DefaultHealthCheckConcurrency()
+	}
+	m.monitorCfg.HealthCheckConcurrency = m.healthCheckConcurrency
+	if m.monitorMgr != nil {
+		m.monitorMgr.SetHealthCheckConcurrency(m.healthCheckConcurrency)
 	}
 	m.minAvailableNodes = cfg.SubscriptionRefresh.MinAvailableNodes
 }

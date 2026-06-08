@@ -95,6 +95,7 @@ management:
   listen: 127.0.0.1:9091                             # 监听地址；公网/局域网监听必须设置 password
   probe_target: http://cp.cloudflare.com/generate_204  # 健康检查目标
   health_check_interval: 5m                          # 后台健康检查间隔
+  health_check_concurrency: 0                         # 后台健康检查并发数；0 表示 CPU 核心数
   password: ""                                       # WebUI 访问密码；仅本机监听允许为空
 
 # ───────────────────────────────────────────────────────────────

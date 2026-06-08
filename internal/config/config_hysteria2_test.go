@@ -213,6 +213,9 @@ func TestNormalizeDefaultsProbeIntervals(t *testing.T) {
 	if cfg.Management.HealthCheckInterval != 5*time.Minute {
 		t.Fatalf("expected default health check interval 5m, got %s", cfg.Management.HealthCheckInterval)
 	}
+	if cfg.Management.HealthCheckConcurrency != DefaultHealthCheckConcurrency() {
+		t.Fatalf("expected default health check concurrency %d, got %d", DefaultHealthCheckConcurrency(), cfg.Management.HealthCheckConcurrency)
+	}
 	if cfg.GeoIP.ExitIPProbeInterval != 5*time.Minute {
 		t.Fatalf("expected default exit IP probe interval 5m, got %s", cfg.GeoIP.ExitIPProbeInterval)
 	}

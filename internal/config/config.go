@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -147,11 +148,22 @@ type MultiPortConfig struct {
 
 // ManagementConfig controls the monitoring HTTP endpoint.
 type ManagementConfig struct {
-	Enabled             *bool         `yaml:"enabled"`
-	Listen              string        `yaml:"listen"`
-	ProbeTarget         string        `yaml:"probe_target"`
-	HealthCheckInterval time.Duration `yaml:"health_check_interval"` // 后台健康检查间隔
-	Password            string        `yaml:"password"`              // WebUI 访问密码，为空则不需要密码
+	Enabled                *bool         `yaml:"enabled"`
+	Listen                 string        `yaml:"listen"`
+	ProbeTarget            string        `yaml:"probe_target"`
+	HealthCheckInterval    time.Duration `yaml:"health_check_interval"`    // 后台健康检查间隔
+	HealthCheckConcurrency int           `yaml:"health_check_concurrency"` // 后台健康检查并发数
+	Password               string        `yaml:"password"`                 // WebUI 访问密码，为空则不需要密码
+}
+
+// DefaultHealthCheckConcurrency returns the default background health check
+// concurrency. Keep this conservative to avoid probe traffic inflating latency.
+func DefaultHealthCheckConcurrency() int {
+	n := runtime.NumCPU()
+	if n < 1 {
+		return 1
+	}
+	return n
 }
 
 // SubscriptionRefreshConfig controls subscription auto-refresh and reload settings.
@@ -307,6 +319,9 @@ func (c *Config) normalize() error {
 	}
 	if c.Management.HealthCheckInterval <= 0 {
 		c.Management.HealthCheckInterval = 5 * time.Minute
+	}
+	if c.Management.HealthCheckConcurrency <= 0 {
+		c.Management.HealthCheckConcurrency = DefaultHealthCheckConcurrency()
 	}
 	if c.Management.Enabled == nil {
 		defaultEnabled := true
@@ -542,6 +557,9 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	}
 	if c.Management.HealthCheckInterval <= 0 {
 		c.Management.HealthCheckInterval = 5 * time.Minute
+	}
+	if c.Management.HealthCheckConcurrency <= 0 {
+		c.Management.HealthCheckConcurrency = DefaultHealthCheckConcurrency()
 	}
 	if c.Management.Enabled == nil {
 		defaultEnabled := true

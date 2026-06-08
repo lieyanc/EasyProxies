@@ -10,7 +10,20 @@ import {
 import { flushSync } from "react-dom";
 import * as echarts from "echarts";
 import {
+  ColumnDef,
+  ColumnFiltersState,
+  SortingState,
+  VisibilityState,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  useReactTable
+} from "@tanstack/react-table";
+import {
   Activity,
+  ArrowUpDown,
   BarChart3,
   Bug,
   ChevronDown,
@@ -28,6 +41,7 @@ import {
   Link2,
   Loader2,
   Lock,
+  MoreHorizontal,
   Moon,
   Network,
   Pause,
@@ -60,6 +74,7 @@ import {
   CardTitle
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ChartContainer } from "@/components/ui/chart";
 import {
   Dialog,
   DialogContent,
@@ -68,8 +83,24 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import {
+  Field as FieldRoot,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import {
   Select,
@@ -88,6 +119,25 @@ import {
   TableRow
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Sidebar as AppSidebarPrimitive,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider
+} from "@/components/ui/sidebar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from "@/components/ui/tooltip";
 import { useEChart } from "@/hooks/use-echart";
 import { cn } from "@/lib/utils";
 import type {
@@ -207,7 +257,8 @@ const DEFAULT_CORE_FORM: CoreSettingsForm = {
   management: {
     listen: "",
     password: "",
-    health_check_interval: "5m"
+    health_check_interval: "5m",
+    health_check_concurrency: ""
   },
   log: {
     output: "stdout",
@@ -252,6 +303,10 @@ const OTA_STATE_LABELS: Record<string, string> = {
   ready: "待应用",
   applying: "应用中",
   failed: "失败"
+};
+
+type DataTableColumnMeta = {
+  label?: string;
 };
 
 function isOtaActiveState(state?: string) {
@@ -1001,123 +1056,125 @@ function App() {
   }
 
   return (
-    <div className="app-frame h-screen overflow-hidden text-foreground">
-      <div className="flex h-full min-h-0">
-        <Sidebar
-          activeTab={activeTab}
-          onChange={changeTab}
-          stars={githubStars}
-          currentVersion={currentVersion}
-        />
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <Header
+    <TooltipProvider delayDuration={200}>
+      <div className="app-frame h-screen overflow-hidden text-foreground">
+        <SidebarProvider>
+          <Sidebar
             activeTab={activeTab}
-            onTabChange={changeTab}
-            lastUpdate={lastUpdate}
-            themeMode={themeMode}
-            onThemeToggle={cycleTheme}
-            autoRefresh={autoRefresh}
-            onAutoRefreshToggle={() => setAutoRefresh((value) => !value)}
-            onProbeAll={probeAllNodes}
-            onAddresses={openAddressesDialog}
-            onExport={exportNodes}
-            onRefresh={() => void refreshNodes(false)}
-            onRefreshSubscription={refreshSubscription}
-            subscriptionEnabled={Boolean(subscriptionStatus?.enabled)}
-            isProbing={isProbing}
+            onChange={changeTab}
+            stars={githubStars}
+            currentVersion={currentVersion}
           />
-          {probeProgress.visible ? <ProbeProgressBar progress={probeProgress} /> : null}
-          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 xl:p-7">
-            <div key={activeTab} className="tab-panel">
-              {activeTab === "dashboard" ? (
-                <DashboardView
-                  nodes={filteredNodes}
-                  allNodes={nodes}
-                  stats={stats}
-                  currentRegion={currentRegion}
-                  onRegionChange={setCurrentRegion}
-                  traffic={traffic}
-                  subscriptionStatus={subscriptionStatus}
-                  onProbe={probeNode}
-                  onRelease={releaseNode}
-                  onBlacklist={blacklistNode}
-                  themeMode={themeMode}
-                />
-              ) : null}
-              {activeTab === "manage" ? (
-                <ManageView
-                  nodes={configNodes}
-                  onAdd={openAddNodeDialog}
-                  onEdit={openEditNodeDialog}
-                  onDelete={deleteNode}
-                  onReload={triggerReload}
-                />
-              ) : null}
-              {activeTab === "debug" ? (
-                <DebugView data={debugData} themeMode={themeMode} />
-              ) : null}
-              {activeTab === "logs" ? (
-                <LogsView
-                  logs={logs}
-                  logsRef={logsRef}
-                  autoScroll={autoScrollLogs}
-                  onAutoScrollChange={setAutoScrollLogs}
-                  onRefresh={pollLogs}
-                />
-              ) : null}
-              {activeTab === "ota" ? (
-                <OtaView
-                  form={updateForm}
-                  setForm={setUpdateForm}
-                  status={updateStatus}
-                  currentVersion={currentVersion}
-                  saving={otaSaving}
-                  onSubmit={handleOtaSave}
-                  onCheck={checkUpdateNow}
-                  onApply={applyUpdateNow}
-                  onDismiss={dismissUpdate}
-                />
-              ) : null}
-              {activeTab === "settings" ? (
-                <SettingsView
-                  form={coreForm}
-                  setForm={setCoreForm}
-                  saving={settingsSaving}
-                  onSubmit={handleSettingsSave}
-                />
-              ) : null}
+          <SidebarInset className="overflow-hidden">
+            <Header
+              activeTab={activeTab}
+              onTabChange={changeTab}
+              lastUpdate={lastUpdate}
+              themeMode={themeMode}
+              onThemeToggle={cycleTheme}
+              autoRefresh={autoRefresh}
+              onAutoRefreshToggle={() => setAutoRefresh((value) => !value)}
+              onProbeAll={probeAllNodes}
+              onAddresses={openAddressesDialog}
+              onExport={exportNodes}
+              onRefresh={() => void refreshNodes(false)}
+              onRefreshSubscription={refreshSubscription}
+              subscriptionEnabled={Boolean(subscriptionStatus?.enabled)}
+              isProbing={isProbing}
+            />
+            {probeProgress.visible ? <ProbeProgressBar progress={probeProgress} /> : null}
+            <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 xl:p-7">
+              <div key={activeTab} className="tab-panel">
+                {activeTab === "dashboard" ? (
+                  <DashboardView
+                    nodes={filteredNodes}
+                    allNodes={nodes}
+                    stats={stats}
+                    currentRegion={currentRegion}
+                    onRegionChange={setCurrentRegion}
+                    traffic={traffic}
+                    subscriptionStatus={subscriptionStatus}
+                    onProbe={probeNode}
+                    onRelease={releaseNode}
+                    onBlacklist={blacklistNode}
+                    themeMode={themeMode}
+                  />
+                ) : null}
+                {activeTab === "manage" ? (
+                  <ManageView
+                    nodes={configNodes}
+                    onAdd={openAddNodeDialog}
+                    onEdit={openEditNodeDialog}
+                    onDelete={deleteNode}
+                    onReload={triggerReload}
+                  />
+                ) : null}
+                {activeTab === "debug" ? (
+                  <DebugView data={debugData} themeMode={themeMode} />
+                ) : null}
+                {activeTab === "logs" ? (
+                  <LogsView
+                    logs={logs}
+                    logsRef={logsRef}
+                    autoScroll={autoScrollLogs}
+                    onAutoScrollChange={setAutoScrollLogs}
+                    onRefresh={pollLogs}
+                  />
+                ) : null}
+                {activeTab === "ota" ? (
+                  <OtaView
+                    form={updateForm}
+                    setForm={setUpdateForm}
+                    status={updateStatus}
+                    currentVersion={currentVersion}
+                    saving={otaSaving}
+                    onSubmit={handleOtaSave}
+                    onCheck={checkUpdateNow}
+                    onApply={applyUpdateNow}
+                    onDismiss={dismissUpdate}
+                  />
+                ) : null}
+                {activeTab === "settings" ? (
+                  <SettingsView
+                    form={coreForm}
+                    setForm={setCoreForm}
+                    saving={settingsSaving}
+                    onSubmit={handleSettingsSave}
+                  />
+                ) : null}
+              </div>
             </div>
-          </div>
-        </main>
+          </SidebarInset>
+        </SidebarProvider>
+        <LoginDialog
+          open={loginOpen}
+          password={loginPassword}
+          error={loginError}
+          setPassword={setLoginPassword}
+          onSubmit={handleLogin}
+        />
+        <ConnectionAddressesDialog
+          open={addressesOpen}
+          onOpenChange={setAddressesOpen}
+          data={addressesData}
+          loading={addressesLoading}
+          protocol={addressProtocol}
+          onProtocolChange={setAddressProtocol}
+          onReload={loadAddresses}
+        />
+        <NodeEditorDialog
+          open={nodeDialogOpen}
+          onOpenChange={setNodeDialogOpen}
+          editing={Boolean(editingNodeName)}
+          form={nodeForm}
+          setForm={setNodeForm}
+          onSubmit={handleNodeSubmit}
+        />
+        {loadingOverlay ? (
+          <LoadingOverlay title={loadingOverlay.title} detail={loadingOverlay.detail} />
+        ) : null}
       </div>
-      <LoginDialog
-        open={loginOpen}
-        password={loginPassword}
-        error={loginError}
-        setPassword={setLoginPassword}
-        onSubmit={handleLogin}
-      />
-      <ConnectionAddressesDialog
-        open={addressesOpen}
-        onOpenChange={setAddressesOpen}
-        data={addressesData}
-        loading={addressesLoading}
-        protocol={addressProtocol}
-        onProtocolChange={setAddressProtocol}
-        onReload={loadAddresses}
-      />
-      <NodeEditorDialog
-        open={nodeDialogOpen}
-        onOpenChange={setNodeDialogOpen}
-        editing={Boolean(editingNodeName)}
-        form={nodeForm}
-        setForm={setNodeForm}
-        onSubmit={handleNodeSubmit}
-      />
-      {loadingOverlay ? (
-        <LoadingOverlay title={loadingOverlay.title} detail={loadingOverlay.detail} />
-      ) : null}
-    </div>
+    </TooltipProvider>
   );
 }
 
@@ -1133,54 +1190,54 @@ function Sidebar({
   currentVersion: string;
 }) {
   return (
-    <aside className="hidden h-full w-64 shrink-0 border-r bg-background md:flex md:flex-col">
-      <div className="flex h-16 items-center gap-3 border-b px-5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
+    <AppSidebarPrimitive>
+      <SidebarHeader className="border-b border-sidebar-border">
+        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
           <Globe2 className="h-[18px] w-[18px]" />
         </div>
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-foreground">EasyProxies</div>
-          <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+          <div className="truncate text-sm font-semibold text-sidebar-foreground">EasyProxies</div>
+          <div className="mt-0.5 flex items-center gap-1 text-xs text-sidebar-foreground/60">
             <Github className="h-3 w-3" />
             <span>Modified By lieyanc</span>
           </div>
         </div>
-      </div>
-      <nav className="min-h-0 flex-1 space-y-1 p-2">
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          const active = activeTab === item.id;
-          return (
-            <Button
-              key={item.id}
-              type="button"
-              variant={active ? "secondary" : "ghost"}
-              className={cn(
-                "h-9 w-full justify-start px-3 font-normal transition-all duration-200 ease-out",
-                active && "font-medium shadow-sm"
-              )}
-              onClick={() => onChange(item.id)}
-            >
-              <Icon className="h-4 w-4" />
-              {item.label}
-            </Button>
-          );
-        })}
-      </nav>
-      <div className="border-t p-4">
-        <div className="mb-2 flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-xs">
-          <span className="text-muted-foreground">Version</span>
-          <span className="min-w-0 truncate rounded-sm bg-primary/10 px-2 py-0.5 font-mono font-semibold text-primary">
-            {currentVersion}
-          </span>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+          <SidebarMenu>
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+              return (
+                <SidebarMenuItem key={item.id}>
+                  <SidebarMenuButton type="button" isActive={active} onClick={() => onChange(item.id)}>
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter>
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-3 rounded-md border border-sidebar-border bg-sidebar px-3 py-2 text-xs">
+            <span className="text-sidebar-foreground/60">Version</span>
+            <span className="min-w-0 truncate rounded-sm bg-sidebar-primary/10 px-2 py-0.5 font-mono font-semibold text-sidebar-primary">
+              {currentVersion}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent px-3 py-2 text-xs text-sidebar-foreground/60">
+            <Github className="h-3.5 w-3.5 text-sidebar-primary" />
+            <span className="font-medium text-sidebar-foreground">{stars}</span>
+            <span>Stars</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2 rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
-          <Github className="h-3.5 w-3.5 text-primary" />
-          <span className="font-medium text-foreground">{stars}</span>
-          <span>Stars</span>
-        </div>
-      </div>
-    </aside>
+      </SidebarFooter>
+    </AppSidebarPrimitive>
   );
 }
 
@@ -2052,50 +2109,7 @@ function ManageView({
       <Card className="overflow-hidden">
         <CardContent className="p-0">
           {nodes.length ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>名称</TableHead>
-                  <TableHead>URI</TableHead>
-                  <TableHead>端口</TableHead>
-                  <TableHead>来源</TableHead>
-                  <TableHead className="w-[180px]">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {nodes.map((node) => (
-                  <TableRow key={node.name}>
-                    <TableCell className="font-medium">{node.name}</TableCell>
-                    <TableCell className="max-w-[420px] truncate font-mono text-xs text-muted-foreground">
-                      {node.uri}
-                    </TableCell>
-                    <TableCell className="font-mono">{node.port || "-"}</TableCell>
-                    <TableCell>
-                      <Badge variant={node.source === "subscription" ? "warning" : "success"}>
-                        {node.source || "manual"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-2">
-                        <Button type="button" size="sm" variant="outline" onClick={() => onEdit(node)}>
-                          <Wrench className="h-4 w-4" />
-                          编辑
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => onDelete(node.name)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          删除
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <ConfigNodesDataTable nodes={nodes} onEdit={onEdit} onDelete={onDelete} />
           ) : (
             <EmptyState label="暂无节点" />
           )}
@@ -2200,41 +2214,7 @@ function DebugView({ data, themeMode }: { data: DebugResponse; themeMode: ThemeM
         </CardHeader>
         <CardContent className="p-0">
           {data.nodes.length ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>节点</TableHead>
-                  <TableHead>成功率</TableHead>
-                  <TableHead>成功/失败</TableHead>
-                  <TableHead>连接</TableHead>
-                  <TableHead>时间线</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.nodes.map((node) => {
-                  const calls = (node.success_count || 0) + (node.failure_count || 0);
-                  const rate = calls ? (((node.success_count || 0) / calls) * 100).toFixed(1) : "0.0";
-                  return (
-                    <TableRow key={node.tag}>
-                      <TableCell>
-                        <div className="font-medium">{node.name || node.tag}</div>
-                        <div className="font-mono text-xs text-muted-foreground">{node.tag}</div>
-                      </TableCell>
-                      <TableCell className="font-mono">{rate}%</TableCell>
-                      <TableCell className="font-mono">
-                        <span className="text-success">{node.success_count || 0}</span>
-                        <span className="px-1 text-muted-foreground">/</span>
-                        <span className="text-destructive">{node.failure_count || 0}</span>
-                      </TableCell>
-                      <TableCell className="font-mono">{node.active_connections || 0}</TableCell>
-                      <TableCell>
-                        <TimelineDots node={node} />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <DebugNodesDataTable nodes={data.nodes} />
           ) : (
             <EmptyState label="暂无诊断数据" />
           )}
@@ -2621,6 +2601,15 @@ function SettingsView({
                 placeholder="5m"
               />
             </Field>
+            <Field label="后台探测并发">
+              <Input
+                type="number"
+                min={1}
+                value={form.management.health_check_concurrency}
+                onChange={(event) => patch("management", { health_check_concurrency: event.target.value })}
+                placeholder="CPU 核心数"
+              />
+            </Field>
           </div>
         </Section>
 
@@ -2776,6 +2765,168 @@ function SettingsView({
   );
 }
 
+function ConfigNodesDataTable({
+  nodes,
+  onEdit,
+  onDelete
+}: {
+  nodes: ConfigNode[];
+  onEdit: (node: ConfigNode) => void;
+  onDelete: (name: string) => void;
+}) {
+  const columns = useMemo<Array<ColumnDef<ConfigNode, unknown>>>(
+    () => [
+      {
+        accessorKey: "name",
+        meta: { label: "名称" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="名称" />,
+        cell: ({ row }) => <div className="font-medium">{row.original.name}</div>
+      },
+      {
+        accessorKey: "uri",
+        meta: { label: "URI" } satisfies DataTableColumnMeta,
+        header: "URI",
+        cell: ({ row }) => (
+          <div className="max-w-[460px] truncate font-mono text-xs text-muted-foreground">
+            {row.original.uri}
+          </div>
+        )
+      },
+      {
+        accessorKey: "port",
+        meta: { label: "端口" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="端口" />,
+        cell: ({ row }) => <span className="font-mono">{row.original.port || "-"}</span>
+      },
+      {
+        accessorKey: "source",
+        meta: { label: "来源" } satisfies DataTableColumnMeta,
+        header: "来源",
+        cell: ({ row }) => (
+          <Badge variant={row.original.source === "subscription" ? "warning" : "success"}>
+            {row.original.source || "manual"}
+          </Badge>
+        )
+      },
+      {
+        id: "actions",
+        enableHiding: false,
+        cell: ({ row }) => (
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8">
+                    <MoreHorizontal className="h-4 w-4" />
+                    <span className="sr-only">打开菜单</span>
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>操作</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>操作</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => onEdit(row.original)}>
+                <Wrench className="h-4 w-4" />
+                编辑
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => onDelete(row.original.name)}
+              >
+                <Trash2 className="h-4 w-4" />
+                删除
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      }
+    ],
+    [onDelete, onEdit]
+  );
+
+  return (
+    <DataTable
+      columns={columns}
+      data={nodes}
+      filterColumn="name"
+      filterPlaceholder="筛选节点..."
+      emptyLabel="暂无节点"
+    />
+  );
+}
+
+function DebugNodesDataTable({ nodes }: { nodes: NodeSnapshot[] }) {
+  const columns = useMemo<Array<ColumnDef<NodeSnapshot, unknown>>>(
+    () => [
+      {
+        id: "name",
+        accessorFn: (node) => `${node.name || ""} ${node.tag || ""}`,
+        meta: { label: "节点" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="节点" />,
+        cell: ({ row }) => (
+          <div>
+            <div className="font-medium">{row.original.name || row.original.tag}</div>
+            <div className="font-mono text-xs text-muted-foreground">{row.original.tag}</div>
+          </div>
+        )
+      },
+      {
+        id: "success_rate",
+        accessorFn: (node) => {
+          const calls = (node.success_count || 0) + (node.failure_count || 0);
+          return calls ? (node.success_count || 0) / calls : 0;
+        },
+        meta: { label: "成功率" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="成功率" />,
+        cell: ({ row }) => {
+          const calls = (row.original.success_count || 0) + (row.original.failure_count || 0);
+          const rate = calls ? (((row.original.success_count || 0) / calls) * 100).toFixed(1) : "0.0";
+          return <span className="font-mono">{rate}%</span>;
+        }
+      },
+      {
+        id: "calls",
+        accessorFn: (node) => (node.success_count || 0) + (node.failure_count || 0),
+        meta: { label: "成功/失败" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="成功/失败" />,
+        cell: ({ row }) => (
+          <span className="font-mono">
+            <span className="text-success">{row.original.success_count || 0}</span>
+            <span className="px-1 text-muted-foreground">/</span>
+            <span className="text-destructive">{row.original.failure_count || 0}</span>
+          </span>
+        )
+      },
+      {
+        accessorKey: "active_connections",
+        meta: { label: "连接" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="连接" />,
+        cell: ({ row }) => <span className="font-mono">{row.original.active_connections || 0}</span>
+      },
+      {
+        id: "timeline",
+        enableSorting: false,
+        meta: { label: "时间线" } satisfies DataTableColumnMeta,
+        header: "时间线",
+        cell: ({ row }) => <TimelineDots node={row.original} />
+      }
+    ],
+    []
+  );
+
+  return (
+    <DataTable
+      columns={columns}
+      data={nodes}
+      filterColumn="name"
+      filterPlaceholder="筛选诊断节点..."
+      emptyLabel="暂无诊断数据"
+    />
+  );
+}
+
 function NodeTable({
   nodes,
   regionVisuals,
@@ -2789,79 +2940,296 @@ function NodeTable({
   onRelease: (tag: string) => void;
   onBlacklist: (tag: string) => void;
 }) {
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>状态</TableHead>
-          <TableHead>地域</TableHead>
-          <TableHead>节点</TableHead>
-          <TableHead>端口</TableHead>
-          <TableHead>延迟</TableHead>
-          <TableHead>连接</TableHead>
-          <TableHead>失败</TableHead>
-          <TableHead className="w-[190px]">操作</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {nodes.map((node) => {
-          const status = nodeStatus(node);
-          const latency = node.last_latency_ms ?? -1;
-          const visual = regionVisual(regionVisuals, node.region);
+  const columns = useMemo<Array<ColumnDef<NodeSnapshot, unknown>>>(
+    () => [
+      {
+        id: "status",
+        accessorFn: (node) => nodeStatus(node).label,
+        meta: { label: "状态" } satisfies DataTableColumnMeta,
+        header: "状态",
+        cell: ({ row }) => {
+          const status = nodeStatus(row.original);
+          return <Badge variant={status.variant}>{status.label}</Badge>;
+        }
+      },
+      {
+        accessorKey: "region",
+        meta: { label: "地域" } satisfies DataTableColumnMeta,
+        header: "地域",
+        cell: ({ row }) => (
+          <RegionCell
+            region={row.original.region}
+            exitIp={row.original.exit_ip}
+            visual={regionVisual(regionVisuals, row.original.region)}
+          />
+        )
+      },
+      {
+        id: "name",
+        accessorFn: (node) => `${node.name || ""} ${node.tag || ""}`,
+        meta: { label: "节点" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="节点" />,
+        cell: ({ row }) => (
+          <div>
+            <div className="font-medium">{row.original.name || row.original.tag}</div>
+            <div className="max-w-[280px] truncate font-mono text-xs text-muted-foreground">
+              {row.original.tag}
+            </div>
+          </div>
+        )
+      },
+      {
+        accessorKey: "port",
+        meta: { label: "端口" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="端口" />,
+        cell: ({ row }) => <span className="font-mono">{row.original.port || "-"}</span>
+      },
+      {
+        accessorKey: "last_latency_ms",
+        meta: { label: "延迟" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="延迟" />,
+        cell: ({ row }) => {
+          const latency = row.original.last_latency_ms ?? -1;
           return (
-            <TableRow key={node.tag}>
-              <TableCell>
-                <Badge variant={status.variant}>{status.label}</Badge>
-              </TableCell>
-              <TableCell>
-                <RegionCell region={node.region} exitIp={node.exit_ip} visual={visual} />
-              </TableCell>
-              <TableCell>
-                <div className="font-medium">{node.name || node.tag}</div>
-                <div className="max-w-[280px] truncate font-mono text-xs text-muted-foreground">
-                  {node.tag}
-                </div>
-              </TableCell>
-              <TableCell className="font-mono">{node.port || "-"}</TableCell>
-              <TableCell>
-                <div className="flex min-w-[120px] items-center gap-2">
-                  <span className="w-12 font-mono text-xs">{latency >= 0 ? `${latency}ms` : "-"}</span>
-                  <QualityBar latency={latency} />
-                </div>
-              </TableCell>
-              <TableCell className="font-mono">{node.active_connections || 0}</TableCell>
-              <TableCell className={cn("font-mono", (node.failure_count || 0) > 0 && "text-destructive")}>
-                {node.failure_count || 0}
-              </TableCell>
-              <TableCell>
-                <div className="flex gap-2">
-                  <Button type="button" size="sm" variant="outline" onClick={() => onProbe(node.tag)}>
-                    <Zap className="h-4 w-4" />
-                    探测
+            <div className="flex min-w-[120px] items-center gap-2">
+              <span className="w-12 font-mono text-xs">{latency >= 0 ? `${latency}ms` : "-"}</span>
+              <QualityBar latency={latency} />
+            </div>
+          );
+        }
+      },
+      {
+        accessorKey: "active_connections",
+        meta: { label: "连接" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="连接" />,
+        cell: ({ row }) => <span className="font-mono">{row.original.active_connections || 0}</span>
+      },
+      {
+        accessorKey: "failure_count",
+        meta: { label: "失败" } satisfies DataTableColumnMeta,
+        header: ({ column }) => <SortableHeader column={column} label="失败" />,
+        cell: ({ row }) => (
+          <span className={cn("font-mono", (row.original.failure_count || 0) > 0 && "text-destructive")}>
+            {row.original.failure_count || 0}
+          </span>
+        )
+      },
+      {
+        id: "actions",
+        enableHiding: false,
+        cell: ({ row }) => (
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8">
+                    <MoreHorizontal className="h-4 w-4" />
+                    <span className="sr-only">打开菜单</span>
                   </Button>
-                  {node.blacklisted ? (
-                    <Button type="button" size="sm" onClick={() => onRelease(node.tag)}>
-                      <RotateCcw className="h-4 w-4" />
-                      解封
-                    </Button>
-                  ) : (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => onBlacklist(node.tag)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      拉黑
-                    </Button>
-                  )}
-                </div>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>操作</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>操作</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => onProbe(row.original.tag)}>
+                <Zap className="h-4 w-4" />
+                探测
+              </DropdownMenuItem>
+              {row.original.blacklisted ? (
+                <DropdownMenuItem onClick={() => onRelease(row.original.tag)}>
+                  <RotateCcw className="h-4 w-4" />
+                  解封
+                </DropdownMenuItem>
+              ) : (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => onBlacklist(row.original.tag)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    拉黑
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      }
+    ],
+    [onBlacklist, onProbe, onRelease, regionVisuals]
+  );
+
+  return (
+    <DataTable
+      columns={columns}
+      data={nodes}
+      filterColumn="name"
+      filterPlaceholder="筛选节点..."
+      emptyLabel="暂无数据"
+    />
+  );
+}
+
+function DataTable<TData, TValue>({
+  columns,
+  data,
+  filterColumn,
+  filterPlaceholder,
+  emptyLabel
+}: {
+  columns: Array<ColumnDef<TData, TValue>>;
+  data: TData[];
+  filterColumn: string;
+  filterPlaceholder: string;
+  emptyLabel: string;
+}) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+
+  const table = useReactTable({
+    data,
+    columns,
+    state: {
+      sorting,
+      columnFilters,
+      columnVisibility
+    },
+    onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    onColumnVisibilityChange: setColumnVisibility,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    initialState: {
+      pagination: {
+        pageSize: 10
+      }
+    }
+  });
+
+  return (
+    <div>
+      <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+        <Input
+          value={(table.getColumn(filterColumn)?.getFilterValue() as string) ?? ""}
+          onChange={(event) => table.getColumn(filterColumn)?.setFilterValue(event.target.value)}
+          placeholder={filterPlaceholder}
+          className="max-w-sm"
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="outline">
+              <SlidersHorizontal className="h-4 w-4" />
+              列
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {table
+              .getAllColumns()
+              .filter((column) => column.getCanHide())
+              .map((column) => {
+                const meta = column.columnDef.meta as DataTableColumnMeta | undefined;
+                return (
+                  <DropdownMenuCheckboxItem
+                    key={column.id}
+                    checked={column.getIsVisible()}
+                    onCheckedChange={(value) => column.toggleVisibility(Boolean(value))}
+                  >
+                    {meta?.label || column.id}
+                  </DropdownMenuCheckboxItem>
+                );
+              })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <Table>
+        <TableHeader>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <TableRow key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <TableHead key={header.id}>
+                  {header.isPlaceholder
+                    ? null
+                    : flexRender(header.column.columnDef.header, header.getContext())}
+                </TableHead>
+              ))}
+            </TableRow>
+          ))}
+        </TableHeader>
+        <TableBody>
+          {table.getRowModel().rows.length ? (
+            table.getRowModel().rows.map((row) => (
+              <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
+                {row.getVisibleCells().map((cell) => (
+                  <TableCell key={cell.id}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))
+          ) : (
+            <TableRow>
+              <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">
+                {emptyLabel}
               </TableCell>
             </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
+          )}
+        </TableBody>
+      </Table>
+      <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm text-muted-foreground">
+          {table.getFilteredRowModel().rows.length} 行
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => table.previousPage()}
+            disabled={!table.getCanPreviousPage()}
+          >
+            上一页
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => table.nextPage()}
+            disabled={!table.getCanNextPage()}
+          >
+            下一页
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SortableHeader({
+  column,
+  label
+}: {
+  column: {
+    toggleSorting: (desc?: boolean) => void;
+    getIsSorted: () => false | "asc" | "desc";
+  };
+  label: string;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="-ml-3 h-8 px-2 data-[state=open]:bg-accent"
+      onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+    >
+      {label}
+      <ArrowUpDown className="h-3.5 w-3.5" />
+    </Button>
   );
 }
 
@@ -3046,42 +3414,39 @@ function MetricCard({
   const toneStyle = {
     default: {
       value: "text-foreground",
-      bar: "bg-border",
-      wash: "from-muted/50"
+      icon: "bg-muted text-muted-foreground"
     },
     success: {
       value: "text-success",
-      bar: "bg-success",
-      wash: "from-success/10"
+      icon: "bg-success/10 text-success"
     },
     primary: {
       value: "text-primary",
-      bar: "bg-primary",
-      wash: "from-primary/10"
+      icon: "bg-primary/10 text-primary"
     },
     destructive: {
       value: "text-destructive",
-      bar: "bg-destructive",
-      wash: "from-destructive/10"
+      icon: "bg-destructive/10 text-destructive"
     }
   }[tone];
 
   return (
-    <Card className="overflow-hidden">
-      <CardContent className="relative p-4">
-        <div className={cn("absolute inset-x-0 top-0 h-0.5", toneStyle.bar)} />
-        <div className={cn("absolute inset-0 bg-gradient-to-br to-transparent", toneStyle.wash)} />
-        <div className="relative text-xs font-medium uppercase text-muted-foreground">{label}</div>
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
+          <div className={cn("h-2 w-2 rounded-full", toneStyle.icon)} />
+        </div>
         <div
           className={cn(
-            "relative mt-2 truncate font-mono font-semibold tracking-normal",
+            "mt-2 truncate font-mono font-semibold tracking-normal",
             compact ? "text-xl" : "text-3xl",
             toneStyle.value
           )}
         >
           {value}
         </div>
-        {detail ? <div className="relative mt-1 text-xs text-muted-foreground">{detail}</div> : null}
+        {detail ? <div className="mt-1 text-xs text-muted-foreground">{detail}</div> : null}
       </CardContent>
     </Card>
   );
@@ -3098,15 +3463,12 @@ function ChartCard({
 }) {
   const ref = useEChart(option, deps);
   return (
-    <Card className="overflow-hidden">
+    <Card>
       <CardHeader className="border-b pb-3">
-        <CardTitle className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-primary" />
-          {title}
-        </CardTitle>
+        <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent className="pt-4">
-        <div ref={ref} className="h-[260px] w-full" />
+        <ChartContainer ref={ref} className="h-[260px]" />
       </CardContent>
     </Card>
   );
@@ -3114,11 +3476,13 @@ function ChartCard({
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="border-b py-4">
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="pt-5">{children}</CardContent>
+    <Card>
+      <CardContent className="p-5">
+        <FieldSet>
+          <FieldLegend>{title}</FieldLegend>
+          <FieldGroup>{children}</FieldGroup>
+        </FieldSet>
+      </CardContent>
     </Card>
   );
 }
@@ -3133,27 +3497,32 @@ function Field({
   className?: string;
 }) {
   return (
-    <div className={cn("space-y-2", className)}>
-      <Label>{label}</Label>
+    <FieldRoot className={className}>
+      <FieldLabel>{label}</FieldLabel>
       {children}
-    </div>
+    </FieldRoot>
   );
 }
 
 function SwitchField({
   label,
   checked,
-  onCheckedChange
+  onCheckedChange,
+  description
 }: {
   label: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
+  description?: string;
 }) {
   return (
-    <div className="flex min-h-10 items-center justify-between gap-4 rounded-md border bg-background px-3 py-2">
-      <Label className="leading-5">{label}</Label>
+    <FieldRoot className="flex min-h-10 flex-row items-center justify-between gap-4 rounded-md border bg-background px-3 py-2">
+      <div className="grid gap-1">
+        <FieldLabel className="leading-5">{label}</FieldLabel>
+        {description ? <FieldDescription className="text-xs">{description}</FieldDescription> : null}
+      </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
-    </div>
+    </FieldRoot>
   );
 }
 
@@ -3255,7 +3624,10 @@ function normalizeCoreForm(
     management: {
       listen: settings.management?.listen || "",
       password: settings.management?.password || "",
-      health_check_interval: settings.management?.health_check_interval || "5m"
+      health_check_interval: settings.management?.health_check_interval || "5m",
+      health_check_concurrency: settings.management?.health_check_concurrency
+        ? String(settings.management.health_check_concurrency)
+        : ""
     },
     log: {
       output: settings.log?.output || "stdout",
@@ -3309,7 +3681,8 @@ function buildCorePayload(form: CoreSettingsForm) {
     management: {
       listen: form.management.listen,
       password: form.management.password,
-      health_check_interval: form.management.health_check_interval || "5m"
+      health_check_interval: form.management.health_check_interval || "5m",
+      health_check_concurrency: Number(form.management.health_check_concurrency) || 0
     },
     log: {
       output: form.log.output,
@@ -3591,17 +3964,46 @@ function isDarkTheme(mode?: ThemeMode) {
 }
 
 function chartPalette(mode?: ThemeMode) {
-  const isDark = isDarkTheme(mode);
   return {
-    background: isDark ? "#111827" : "#ffffff",
-    foreground: isDark ? "#f8fafc" : "#0f172a",
-    muted: isDark ? "#cbd5e1" : "#64748b",
-    border: isDark ? "#334155" : "#dbe4ef",
-    primary: "#018eee",
-    success: "#16a36a",
-    warning: "#f59f0b",
-    destructive: "#dc2626"
+    background: cssVarColor("--card", mode),
+    foreground: cssVarColor("--foreground", mode),
+    muted: cssVarColor("--muted-foreground", mode),
+    border: cssVarColor("--border", mode),
+    primary: cssVarColor("--chart-1", mode),
+    success: cssVarColor("--chart-2", mode),
+    warning: cssVarColor("--chart-3", mode),
+    destructive: cssVarColor("--chart-4", mode),
+    accent: cssVarColor("--chart-5", mode)
   };
+}
+
+function cssVarColor(name: string, mode?: ThemeMode) {
+  if (typeof window === "undefined") {
+    return "hsl(0 0% 50%)";
+  }
+  const dark = isDarkTheme(mode);
+  const rootDark = document.documentElement.classList.contains("dark");
+  if (dark !== rootDark) {
+    return cssVarFallbackColor(name, dark);
+  }
+
+  const value = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  if (value) return `hsl(${value})`;
+
+  return cssVarFallbackColor(name, dark);
+}
+
+function cssVarFallbackColor(name: string, dark: boolean) {
+  if (name === "--card") return dark ? "hsl(0 0% 3.9%)" : "hsl(0 0% 100%)";
+  if (name === "--foreground") return dark ? "hsl(210 40% 98%)" : "hsl(0 0% 3.9%)";
+  if (name === "--muted-foreground") return dark ? "hsl(0 0% 63.9%)" : "hsl(0 0% 45.1%)";
+  if (name === "--border") return dark ? "hsl(0 0% 14.9%)" : "hsl(0 0% 89.8%)";
+  if (name === "--chart-1") return dark ? "hsl(0 0% 98%)" : "hsl(0 0% 9%)";
+  if (name === "--chart-2") return dark ? "hsl(151 62% 44%)" : "hsl(151 62% 41%)";
+  if (name === "--chart-3") return dark ? "hsl(42 91% 54%)" : "hsl(42 91% 50%)";
+  if (name === "--chart-4") return dark ? "hsl(0 62.8% 50%)" : "hsl(0 84.2% 60.2%)";
+  if (name === "--chart-5") return dark ? "hsl(217 91% 60%)" : "hsl(221 83% 53%)";
+  return "hsl(0 0% 50%)";
 }
 
 function chartTooltip(mode?: ThemeMode, trigger: "item" | "axis" = "item") {
