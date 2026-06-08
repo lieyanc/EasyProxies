@@ -182,8 +182,11 @@ export type UpdateStatusResponse = {
   message?: string;
   status?: {
     state?: string;
+    current_version?: string;
     latest_version?: string;
+    download_progress?: number;
     progress?: number;
+    is_prerelease?: boolean;
     error?: string;
     release_notes?: string;
     last_check?: string;

@@ -7,6 +7,7 @@ import {
   useRef,
   useState
 } from "react";
+import { flushSync } from "react-dom";
 import * as echarts from "echarts";
 import {
   Activity,
@@ -111,6 +112,10 @@ const NAV_ITEMS: Array<{ id: TabId; label: string; icon: typeof LayoutDashboard 
   { id: "ota", label: "更新", icon: UploadCloud },
   { id: "settings", label: "设置", icon: Settings }
 ];
+
+type ViewTransitionDocument = Document & {
+  startViewTransition?: (callback: () => void) => void;
+};
 
 type RegionSeed = {
   value: string;
@@ -222,6 +227,30 @@ const DEFAULT_UPDATE_FORM: Required<UpdateConfig> = {
   use_fastest_node: false
 };
 
+const OTA_ACTIVE_STATES = new Set(["checking", "downloading", "applying"]);
+
+const OTA_STATE_LABELS: Record<string, string> = {
+  disabled: "未启用",
+  idle: "空闲",
+  checking: "检查中",
+  downloading: "下载中",
+  ready: "待应用",
+  applying: "应用中",
+  failed: "失败"
+};
+
+function isOtaActiveState(state?: string) {
+  return Boolean(state && OTA_ACTIVE_STATES.has(state));
+}
+
+function otaStateLabel(state: string) {
+  return OTA_STATE_LABELS[state] || state;
+}
+
+function clampPercent(value?: number) {
+  return Math.max(0, Math.min(100, value || 0));
+}
+
 function assertNoPayloadError(payload: { error?: string }) {
   if (payload.error) {
     throw new Error(payload.error);
@@ -306,6 +335,26 @@ function App() {
     };
   }, [nodes, nodesData.total_nodes, traffic]);
 
+  const changeTab = useCallback(
+    (tab: TabId) => {
+      if (tab === activeTab) return;
+
+      const applyTab = () => setActiveTab(tab);
+      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const startViewTransition = (document as ViewTransitionDocument).startViewTransition;
+
+      if (prefersReducedMotion || typeof startViewTransition !== "function") {
+        applyTab();
+        return;
+      }
+
+      startViewTransition.call(document, () => {
+        flushSync(applyTab);
+      });
+    },
+    [activeTab]
+  );
+
   const handleApiError = useCallback((error: unknown, fallback = "请求失败") => {
     if (error instanceof UnauthorizedError) {
       setAuthenticated(false);
@@ -327,6 +376,30 @@ function App() {
     }
   }, []);
 
+  const loadDebugData = useCallback(
+    async (silent = false) => {
+      try {
+        const payload = await apiJson<DebugResponse>("/api/debug");
+        setDebugData({
+          nodes: payload.nodes || [],
+          total_calls: payload.total_calls || 0,
+          total_success: payload.total_success || 0,
+          success_rate: payload.success_rate || 0
+        });
+      } catch (error) {
+        if (silent) {
+          if (error instanceof UnauthorizedError) {
+            setAuthenticated(false);
+            setLoginOpen(true);
+          }
+          return;
+        }
+        handleApiError(error, "诊断数据读取失败");
+      }
+    },
+    [handleApiError]
+  );
+
   const refreshNodes = useCallback(
     async (silent = false) => {
       try {
@@ -336,6 +409,7 @@ function App() {
         setAuthenticated(true);
         setLoginOpen(false);
         void loadSubscriptionStatus();
+        void loadDebugData(true);
       } catch (error) {
         if (!silent) {
           handleApiError(error, "节点数据读取失败");
@@ -345,7 +419,7 @@ function App() {
         }
       }
     },
-    [handleApiError, loadSubscriptionStatus]
+    [handleApiError, loadDebugData, loadSubscriptionStatus]
   );
 
   useEffect(() => {
@@ -683,20 +757,6 @@ function App() {
     }
   }
 
-  async function loadDebugData() {
-    try {
-      const payload = await apiJson<DebugResponse>("/api/debug");
-      setDebugData({
-        nodes: payload.nodes || [],
-        total_calls: payload.total_calls || 0,
-        total_success: payload.total_success || 0,
-        success_rate: payload.success_rate || 0
-      });
-    } catch (error) {
-      handleApiError(error, "诊断数据读取失败");
-    }
-  }
-
   async function pollLogs() {
     try {
       const payload = await apiJson<{ logs: string }>("/api/logs");
@@ -777,6 +837,22 @@ function App() {
     }
   }
 
+  const loadUpdateStatus = useCallback(async () => {
+    try {
+      const [version, status] = await Promise.all([
+        apiJson<VersionResponse>("/api/version"),
+        apiJson<UpdateStatusResponse>("/api/update/status")
+      ]);
+      setCurrentVersion(version.version?.version || status.status?.current_version || "dev");
+      setUpdateStatus(status);
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        setAuthenticated(false);
+        setLoginOpen(true);
+      }
+    }
+  }, []);
+
   async function loadOtaPage() {
     try {
       const settings = await apiJson<SettingsResponse>("/api/settings");
@@ -789,21 +865,21 @@ function App() {
     }
   }
 
-  async function loadUpdateStatus() {
-    try {
-      const [version, status] = await Promise.all([
-        apiJson<VersionResponse>("/api/version"),
-        apiJson<UpdateStatusResponse>("/api/update/status")
-      ]);
-      setCurrentVersion(version.version?.version || "dev");
-      setUpdateStatus(status);
-    } catch (error) {
-      if (error instanceof UnauthorizedError) {
-        setAuthenticated(false);
-        setLoginOpen(true);
-      }
-    }
-  }
+  useEffect(() => {
+    if (!authenticated) return;
+
+    const state = updateStatus?.status?.state;
+    const isRunning = isOtaActiveState(state);
+    if (activeTab !== "ota" && !isRunning) return;
+
+    const intervalMs = isRunning ? 1000 : 5000;
+    const id = window.setInterval(() => {
+      if (document.hidden && !isRunning) return;
+      void loadUpdateStatus();
+    }, intervalMs);
+
+    return () => window.clearInterval(id);
+  }, [activeTab, authenticated, loadUpdateStatus, updateStatus?.status?.state]);
 
   async function handleOtaSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -885,11 +961,11 @@ function App() {
   return (
     <div className="app-frame h-screen overflow-hidden text-foreground">
       <div className="flex h-full min-h-0">
-        <Sidebar activeTab={activeTab} onChange={setActiveTab} stars={githubStars} />
+        <Sidebar activeTab={activeTab} onChange={changeTab} stars={githubStars} />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <Header
             activeTab={activeTab}
-            onTabChange={setActiveTab}
+            onTabChange={changeTab}
             lastUpdate={lastUpdate}
             themeMode={themeMode}
             onThemeToggle={cycleTheme}
@@ -904,63 +980,66 @@ function App() {
           />
           {probeProgress.visible ? <ProbeProgressBar progress={probeProgress} /> : null}
           <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 xl:p-7">
-            {activeTab === "dashboard" ? (
-              <DashboardView
-                nodes={filteredNodes}
-                allNodes={nodes}
-                stats={stats}
-                currentRegion={currentRegion}
-                onRegionChange={setCurrentRegion}
-                traffic={traffic}
-                subscriptionStatus={subscriptionStatus}
-                onProbe={probeNode}
-                onRelease={releaseNode}
-                onBlacklist={blacklistNode}
-                themeMode={themeMode}
-              />
-            ) : null}
-            {activeTab === "manage" ? (
-              <ManageView
-                nodes={configNodes}
-                onAdd={openAddNodeDialog}
-                onEdit={openEditNodeDialog}
-                onDelete={deleteNode}
-                onReload={triggerReload}
-              />
-            ) : null}
-            {activeTab === "debug" ? (
-              <DebugView data={debugData} themeMode={themeMode} />
-            ) : null}
-            {activeTab === "logs" ? (
-              <LogsView
-                logs={logs}
-                logsRef={logsRef}
-                autoScroll={autoScrollLogs}
-                onAutoScrollChange={setAutoScrollLogs}
-                onRefresh={pollLogs}
-              />
-            ) : null}
-            {activeTab === "ota" ? (
-              <OtaView
-                form={updateForm}
-                setForm={setUpdateForm}
-                status={updateStatus}
-                currentVersion={currentVersion}
-                saving={otaSaving}
-                onSubmit={handleOtaSave}
-                onCheck={checkUpdateNow}
-                onApply={applyUpdateNow}
-                onDismiss={dismissUpdate}
-              />
-            ) : null}
-            {activeTab === "settings" ? (
-              <SettingsView
-                form={coreForm}
-                setForm={setCoreForm}
-                saving={settingsSaving}
-                onSubmit={handleSettingsSave}
-              />
-            ) : null}
+            <div key={activeTab} className="tab-panel">
+              {activeTab === "dashboard" ? (
+                <DashboardView
+                  nodes={filteredNodes}
+                  allNodes={nodes}
+                  stats={stats}
+                  debugData={debugData}
+                  currentRegion={currentRegion}
+                  onRegionChange={setCurrentRegion}
+                  traffic={traffic}
+                  subscriptionStatus={subscriptionStatus}
+                  onProbe={probeNode}
+                  onRelease={releaseNode}
+                  onBlacklist={blacklistNode}
+                  themeMode={themeMode}
+                />
+              ) : null}
+              {activeTab === "manage" ? (
+                <ManageView
+                  nodes={configNodes}
+                  onAdd={openAddNodeDialog}
+                  onEdit={openEditNodeDialog}
+                  onDelete={deleteNode}
+                  onReload={triggerReload}
+                />
+              ) : null}
+              {activeTab === "debug" ? (
+                <DebugView data={debugData} themeMode={themeMode} />
+              ) : null}
+              {activeTab === "logs" ? (
+                <LogsView
+                  logs={logs}
+                  logsRef={logsRef}
+                  autoScroll={autoScrollLogs}
+                  onAutoScrollChange={setAutoScrollLogs}
+                  onRefresh={pollLogs}
+                />
+              ) : null}
+              {activeTab === "ota" ? (
+                <OtaView
+                  form={updateForm}
+                  setForm={setUpdateForm}
+                  status={updateStatus}
+                  currentVersion={currentVersion}
+                  saving={otaSaving}
+                  onSubmit={handleOtaSave}
+                  onCheck={checkUpdateNow}
+                  onApply={applyUpdateNow}
+                  onDismiss={dismissUpdate}
+                />
+              ) : null}
+              {activeTab === "settings" ? (
+                <SettingsView
+                  form={coreForm}
+                  setForm={setCoreForm}
+                  saving={settingsSaving}
+                  onSubmit={handleSettingsSave}
+                />
+              ) : null}
+            </div>
           </div>
         </main>
       </div>
@@ -996,7 +1075,7 @@ function Sidebar({
   stars: string;
 }) {
   return (
-    <aside className="hidden h-full w-[272px] shrink-0 border-r bg-background md:flex md:flex-col">
+    <aside className="hidden h-full w-64 shrink-0 border-r bg-background md:flex md:flex-col">
       <div className="flex h-16 items-center gap-3 border-b px-5">
         <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <Globe2 className="h-[18px] w-[18px]" />
@@ -1019,8 +1098,8 @@ function Sidebar({
               type="button"
               variant={active ? "secondary" : "ghost"}
               className={cn(
-                "h-9 w-full justify-start px-3 font-normal",
-                active && "font-medium"
+                "h-9 w-full justify-start px-3 font-normal transition-all duration-200 ease-out",
+                active && "font-medium shadow-sm"
               )}
               onClick={() => onChange(item.id)}
             >
@@ -1145,6 +1224,7 @@ function DashboardView({
   nodes,
   allNodes,
   stats,
+  debugData,
   currentRegion,
   onRegionChange,
   traffic,
@@ -1164,6 +1244,7 @@ function DashboardView({
     up: number;
     down: number;
   };
+  debugData: DebugResponse;
   currentRegion: string;
   onRegionChange: (region: string) => void;
   traffic: TrafficPoint[];
@@ -1318,20 +1399,44 @@ function DashboardView({
     } satisfies echarts.EChartsOption;
   }, [themeMode, traffic]);
 
+  const requestSummary = useMemo(() => {
+    const totalCalls = debugData.total_calls || 0;
+    const totalSuccess = debugData.total_success || 0;
+    const totalFailure = Math.max(totalCalls - totalSuccess, 0);
+    const topNodes = [...debugData.nodes]
+      .map((node) => {
+        const success = node.success_count || 0;
+        const failure = node.failure_count || 0;
+        return {
+          node,
+          calls: success + failure
+        };
+      })
+      .filter((item) => item.calls > 0)
+      .sort((a, b) => b.calls - a.calls)
+      .slice(0, 5);
+
+    return {
+      totalCalls,
+      totalSuccess,
+      totalFailure,
+      successRate: debugData.success_rate || 0,
+      topNodes
+    };
+  }, [debugData]);
+
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-        <MetricCard
-          label="节点总数"
-          value={stats.total}
-          detail={subscriptionStatus?.enabled ? `Sub: ${subscriptionStatus.node_count ?? 0}` : ""}
-          tone="default"
+      <div className="grid gap-4 lg:grid-cols-3">
+        <NodeOverviewCard stats={stats} subscriptionStatus={subscriptionStatus} />
+        <RequestOverviewCard
+          totalCalls={requestSummary.totalCalls}
+          totalSuccess={requestSummary.totalSuccess}
+          totalFailure={requestSummary.totalFailure}
+          successRate={requestSummary.successRate}
+          topNodes={requestSummary.topNodes}
         />
-        <MetricCard label="健康节点" value={stats.healthy} tone="success" />
-        <MetricCard label="活跃连接" value={stats.active} tone="primary" />
-        <MetricCard label="不可用" value={stats.blocked} tone="destructive" />
-        <MetricCard label="实时上传" value={`${formatBytes(stats.up)}/s`} tone="primary" compact />
-        <MetricCard label="实时下载" value={`${formatBytes(stats.down)}/s`} tone="success" compact />
+        <SpeedOverviewCard up={stats.up} down={stats.down} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
@@ -1382,6 +1487,225 @@ function DashboardView({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+type TopRequestNode = {
+  node: NodeSnapshot;
+  calls: number;
+};
+
+function DashboardSummaryCard({
+  title,
+  icon: Icon,
+  children
+}: {
+  title: string;
+  icon: typeof LayoutDashboard;
+  children: ReactNode;
+}) {
+  return (
+    <Card className="h-full overflow-hidden">
+      <CardHeader className="flex flex-row items-center gap-3 border-b px-4 py-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+          <Icon className="h-4 w-4" />
+        </div>
+        <CardTitle className="text-sm font-semibold tracking-normal">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 p-4">{children}</CardContent>
+    </Card>
+  );
+}
+
+function DashboardMiniStat({
+  label,
+  value,
+  tone = "default"
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: "default" | "success" | "primary" | "destructive";
+}) {
+  const toneClass = {
+    default: "text-foreground",
+    success: "text-success",
+    primary: "text-primary",
+    destructive: "text-destructive"
+  }[tone];
+
+  return (
+    <div className="min-w-0 rounded-md border bg-muted/35 px-3 py-2">
+      <div className="truncate text-xs text-muted-foreground">{label}</div>
+      <div className={cn("mt-1 truncate font-mono text-sm font-semibold", toneClass)}>{value}</div>
+    </div>
+  );
+}
+
+function NodeOverviewCard({
+  stats,
+  subscriptionStatus
+}: {
+  stats: {
+    total: number;
+    healthy: number;
+    active: number;
+    blocked: number;
+    up: number;
+    down: number;
+  };
+  subscriptionStatus: SubscriptionStatus | null;
+}) {
+  const healthRate = stats.total ? (stats.healthy / stats.total) * 100 : 0;
+
+  return (
+    <DashboardSummaryCard title="节点" icon={Network}>
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">可用 / 总数</div>
+          <div className="mt-1 flex items-baseline gap-1 font-mono">
+            <span className="text-3xl font-semibold text-success">{formatCount(stats.healthy)}</span>
+            <span className="text-lg text-muted-foreground">/</span>
+            <span className="text-xl font-semibold text-foreground">{formatCount(stats.total)}</span>
+          </div>
+        </div>
+        {subscriptionStatus?.enabled ? (
+          <Badge variant="secondary" className="shrink-0">
+            Sub {subscriptionStatus.node_count ?? 0}
+          </Badge>
+        ) : null}
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>健康率</span>
+          <span className="font-mono text-foreground">{healthRate.toFixed(1)}%</span>
+        </div>
+        <Progress value={healthRate} className="h-2" />
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        <DashboardMiniStat label="活跃连接" value={formatCount(stats.active)} tone="primary" />
+        <DashboardMiniStat label="不可用" value={formatCount(stats.blocked)} tone="destructive" />
+        <DashboardMiniStat label="节点总数" value={formatCount(stats.total)} />
+      </div>
+    </DashboardSummaryCard>
+  );
+}
+
+function RequestOverviewCard({
+  totalCalls,
+  totalSuccess,
+  totalFailure,
+  successRate,
+  topNodes
+}: {
+  totalCalls: number;
+  totalSuccess: number;
+  totalFailure: number;
+  successRate: number;
+  topNodes: TopRequestNode[];
+}) {
+  const topMax = Math.max(...topNodes.map((item) => item.calls), 0);
+
+  return (
+    <DashboardSummaryCard title="请求次数" icon={BarChart3}>
+      <div>
+        <div className="text-xs text-muted-foreground">总请求</div>
+        <div className="mt-1 font-mono text-3xl font-semibold text-foreground">
+          {formatCount(totalCalls)}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        <DashboardMiniStat label="成功" value={formatCount(totalSuccess)} tone="success" />
+        <DashboardMiniStat label="失败" value={formatCount(totalFailure)} tone="destructive" />
+        <DashboardMiniStat label="成功率" value={`${successRate.toFixed(1)}%`} tone="primary" />
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <Activity className="h-3.5 w-3.5" />
+          Top 节点
+        </div>
+        {topNodes.length ? (
+          <div className="space-y-2">
+            {topNodes.map((item, index) => {
+              const name = item.node.name || item.node.tag;
+              const percent = topMax ? (item.calls / topMax) * 100 : 0;
+              return (
+                <div key={item.node.tag} className="space-y-1.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Badge variant="secondary" className="h-6 w-8 shrink-0 justify-center px-0">
+                      {index + 1}
+                    </Badge>
+                    <div className="min-w-0 flex-1 truncate text-sm font-medium">{name}</div>
+                    <div className="shrink-0 font-mono text-sm font-semibold">
+                      {formatCount(item.calls)}
+                    </div>
+                  </div>
+                  <Progress value={percent} className="h-1.5" />
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed py-5 text-center text-sm text-muted-foreground">
+            暂无请求数据
+          </div>
+        )}
+      </div>
+    </DashboardSummaryCard>
+  );
+}
+
+function SpeedOverviewCard({ up, down }: { up: number; down: number }) {
+  const total = up + down;
+  const downShare = total > 0 ? (down / total) * 100 : 0;
+  const upShare = total > 0 ? (up / total) * 100 : 0;
+
+  return (
+    <DashboardSummaryCard title="实时速度" icon={Gauge}>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="min-w-0 rounded-md border bg-muted/35 px-3 py-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Download className="h-3.5 w-3.5" />
+            下载
+          </div>
+          <div className="mt-2 truncate font-mono text-2xl font-semibold text-success">
+            {formatBytes(down)}/s
+          </div>
+        </div>
+        <div className="min-w-0 rounded-md border bg-muted/35 px-3 py-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <UploadCloud className="h-3.5 w-3.5" />
+            上传
+          </div>
+          <div className="mt-2 truncate font-mono text-2xl font-semibold text-primary">
+            {formatBytes(up)}/s
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>上下行占比</span>
+          <span className="font-mono text-foreground">{formatBytes(total)}/s</span>
+        </div>
+        <div className="flex h-2 overflow-hidden rounded-full bg-muted">
+          <div className="h-full bg-success" style={{ width: `${downShare}%` }} />
+          <div className="h-full bg-primary" style={{ width: `${upShare}%` }} />
+        </div>
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Down {downShare.toFixed(0)}%</span>
+          <span>Up {upShare.toFixed(0)}%</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <DashboardMiniStat label="实时下载" value={`${formatBytes(down)}/s`} tone="success" />
+        <DashboardMiniStat label="实时上传" value={`${formatBytes(up)}/s`} tone="primary" />
+      </div>
+    </DashboardSummaryCard>
   );
 }
 
@@ -1687,25 +2011,38 @@ function OtaView({
   onDismiss: () => void;
 }) {
   const state = status?.status?.state || (status?.enabled ? "idle" : "disabled");
-  const progress = Math.max(0, Math.min(100, status?.status?.progress || 0));
+  const stateLabel = otaStateLabel(state);
+  const progress = clampPercent(status?.status?.progress);
+  const downloadProgress = clampPercent(status?.status?.download_progress);
+  const isRunning = isOtaActiveState(state);
+  const progressLabel = `${Math.round(progress)}%`;
+  const statusMessage =
+    status?.message ||
+    status?.status?.error ||
+    status?.status?.release_notes ||
+    (status?.status?.last_check ? `上次检查: ${status.status.last_check}` : "");
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-normal">OTA 更新</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{state}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{stateLabel}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={onCheck}>
-            <RefreshCw className="h-4 w-4" />
+          <Button type="button" variant="outline" onClick={onCheck} disabled={isRunning}>
+            <RefreshCw className={cn("h-4 w-4", isRunning ? "animate-spin" : "")} />
             检查更新
           </Button>
-          <Button type="button" onClick={onApply}>
-            <UploadCloud className="h-4 w-4" />
+          <Button type="button" onClick={onApply} disabled={isRunning}>
+            {isRunning ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <UploadCloud className="h-4 w-4" />
+            )}
             下载/应用
           </Button>
-          <Button type="button" variant="outline" onClick={onDismiss}>
+          <Button type="button" variant="outline" onClick={onDismiss} disabled={state !== "ready"}>
             忽略
           </Button>
         </div>
@@ -1714,7 +2051,7 @@ function OtaView({
       <div className="grid gap-4 md:grid-cols-3">
         <MetricCard label="当前版本" value={currentVersion} compact />
         <MetricCard label="最新版本" value={status?.status?.latest_version || "-"} compact />
-        <MetricCard label="更新状态" value={state} compact />
+        <MetricCard label="更新状态" value={stateLabel} compact />
       </div>
 
       <Card className="overflow-hidden">
@@ -1769,10 +2106,12 @@ function OtaView({
             </div>
             <div className="space-y-2">
               <Progress value={progress} />
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>整体 {progressLabel}</span>
+                {state === "downloading" ? <span>下载 {Math.round(downloadProgress)}%</span> : null}
+              </div>
               <p className="line-clamp-3 text-xs text-muted-foreground">
-                {status?.status?.error ||
-                  status?.status?.release_notes ||
-                  (status?.status?.last_check ? `上次检查: ${status.status.last_check}` : "")}
+                {statusMessage}
               </p>
             </div>
             <Button type="submit" disabled={saving}>
@@ -2889,11 +3228,19 @@ function normalizeRegionKey(region?: string) {
 }
 
 function formatBytes(bytes: number, decimals = 2) {
-  if (!bytes || Number.isNaN(bytes) || bytes <= 0) return "0 B";
+  if (!bytes || !Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const sizes = ["B", "KB", "MB", "GB", "TB"];
   const k = 1024;
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  const i = Math.max(0, Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1));
   return `${Number.parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`;
+}
+
+function formatCount(value: number) {
+  const count = Math.max(0, Math.round(value || 0));
+  return new Intl.NumberFormat("zh-CN", {
+    notation: count >= 100000 ? "compact" : "standard",
+    maximumFractionDigits: 1
+  }).format(count);
 }
 
 function readThemeMode(): ThemeMode {

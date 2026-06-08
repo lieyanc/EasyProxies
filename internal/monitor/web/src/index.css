@@ -108,4 +108,61 @@
     background: hsl(var(--muted-foreground) / 0.35);
     border-radius: 999px;
   }
+
+  .tab-panel {
+    animation: tab-panel-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    view-transition-name: monitor-tab-panel;
+  }
+}
+
+@keyframes tab-panel-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.995);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes tab-panel-exit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translate3d(0, -6px, 0) scale(0.998);
+  }
+}
+
+@supports (view-transition-name: none) {
+  .tab-panel {
+    animation: none;
+  }
+
+  ::view-transition-old(monitor-tab-panel) {
+    animation: tab-panel-exit 160ms cubic-bezier(0.4, 0, 1, 1) both;
+    mix-blend-mode: normal;
+  }
+
+  ::view-transition-new(monitor-tab-panel) {
+    animation: tab-panel-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    mix-blend-mode: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-panel {
+    animation: none;
+    view-transition-name: none;
+  }
+
+  ::view-transition-old(monitor-tab-panel),
+  ::view-transition-new(monitor-tab-panel) {
+    animation: none;
+  }
 }
