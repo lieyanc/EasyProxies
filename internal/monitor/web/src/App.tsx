@@ -857,7 +857,7 @@ function App() {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-muted/30 text-foreground">
+    <div className="app-frame h-screen overflow-hidden text-foreground">
       <div className="flex h-full min-h-0">
         <Sidebar activeTab={activeTab} onChange={setActiveTab} stars={githubStars} />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -877,7 +877,7 @@ function App() {
             isProbing={isProbing}
           />
           {probeProgress.visible ? <ProbeProgressBar progress={probeProgress} /> : null}
-          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6">
+          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 xl:p-7">
             {activeTab === "dashboard" ? (
               <DashboardView
                 nodesData={nodesData}
@@ -971,25 +971,31 @@ function Sidebar({
   stars: string;
 }) {
   return (
-    <aside className="hidden h-full w-64 shrink-0 border-r bg-background md:flex md:flex-col">
-      <div className="flex h-14 items-center gap-3 border-b px-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md border bg-muted">
-          <Globe2 className="h-4 w-4" />
+    <aside className="hidden h-full w-[272px] shrink-0 border-r border-border/70 bg-card/85 shadow-[1px_0_0_hsl(var(--background)/0.7)] backdrop-blur-xl md:flex md:flex-col">
+      <div className="flex h-16 items-center gap-3 border-b border-border/70 px-5">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-[0_10px_24px_hsl(var(--primary)/0.26)]">
+          <Globe2 className="h-[18px] w-[18px]" />
         </div>
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">easy-proxies</div>
-          <div className="text-xs text-muted-foreground">Monitor</div>
+          <div className="truncate text-sm font-semibold text-foreground">easy-proxies</div>
+          <div className="text-xs text-muted-foreground">Control Monitor</div>
         </div>
       </div>
-      <nav className="min-h-0 flex-1 space-y-1 p-3">
+      <nav className="min-h-0 flex-1 space-y-1.5 p-3">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
+          const active = activeTab === item.id;
           return (
             <Button
               key={item.id}
               type="button"
-              variant={activeTab === item.id ? "secondary" : "ghost"}
-              className="w-full justify-start gap-2"
+              variant="ghost"
+              className={cn(
+                "h-10 w-full justify-start gap-3 px-3",
+                active
+                  ? "bg-primary text-primary-foreground shadow-[0_8px_18px_hsl(var(--primary)/0.22)] hover:bg-primary/95 hover:text-primary-foreground"
+                  : "hover:bg-accent/80"
+              )}
               onClick={() => onChange(item.id)}
             >
               <Icon className="h-4 w-4" />
@@ -998,9 +1004,9 @@ function Sidebar({
           );
         })}
       </nav>
-      <div className="border-t p-4">
-        <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          <Github className="h-3.5 w-3.5" />
+      <div className="border-t border-border/70 p-4">
+        <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/45 px-3 py-2.5 text-xs text-muted-foreground">
+          <Github className="h-3.5 w-3.5 text-primary" />
           <span className="font-medium text-foreground">{stars}</span>
           <span>Stars</span>
         </div>
@@ -1041,7 +1047,7 @@ function Header({
   const ThemeIcon = themeMode === "dark" ? Moon : themeMode === "light" ? Sun : Circle;
 
   return (
-    <header className="flex min-h-14 shrink-0 flex-col gap-3 border-b bg-background px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+    <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-border/70 bg-card/80 px-4 py-3 shadow-[0_1px_0_hsl(var(--background)/0.8)] backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between lg:px-6">
       <div className="flex min-w-0 items-center gap-3">
         <div className="md:hidden">
           <Select value={activeTab} onValueChange={(value) => onTabChange(value as TabId)}>
@@ -1057,13 +1063,13 @@ function Header({
             </SelectContent>
           </Select>
         </div>
-        <Badge variant="outline" className="gap-2">
+        <Badge variant="outline" className="gap-2 border-success/20 bg-success/10 text-success">
           <span className="h-2 w-2 rounded-full bg-success shadow-[0_0_0_3px_hsl(var(--success)/0.15)]" />
           {lastUpdate}
         </Badge>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" size="icon" variant="ghost" onClick={onThemeToggle} title="切换主题">
+        <Button type="button" size="icon" variant="outline" onClick={onThemeToggle} title="切换主题">
           <ThemeIcon className="h-4 w-4" />
         </Button>
         <Button type="button" variant="outline" onClick={onProbeAll} disabled={isProbing}>
@@ -1094,7 +1100,7 @@ function Header({
 
 function ProbeProgressBar({ progress }: { progress: ProbeProgress }) {
   return (
-    <div className="shrink-0 border-b bg-background px-4 py-3 lg:px-6">
+    <div className="shrink-0 border-b border-border/70 bg-card/80 px-4 py-3 backdrop-blur-xl lg:px-6">
       <div className="flex flex-col gap-2 md:flex-row md:items-center">
         <Progress value={progress.percent} className="h-2 md:flex-1" />
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -1269,8 +1275,8 @@ function DashboardView({
           lineStyle: { width: 2, color: palette.primary },
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: "rgba(37, 99, 235, 0.28)" },
-              { offset: 1, color: "rgba(37, 99, 235, 0)" }
+              { offset: 0, color: "rgba(1, 142, 238, 0.28)" },
+              { offset: 1, color: "rgba(1, 142, 238, 0)" }
             ])
           },
           data: traffic.map((point) => point.up)
@@ -1294,7 +1300,7 @@ function DashboardView({
   }, [themeMode, traffic]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <MetricCard
           label="节点总数"
@@ -1329,8 +1335,8 @@ function DashboardView({
         ))}
       </div>
 
-      <Card>
-        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <Card className="overflow-hidden">
+        <CardHeader className="flex flex-col gap-3 border-b border-border/60 bg-muted/25 md:flex-row md:items-center md:justify-between">
           <div>
             <CardTitle>节点状态</CardTitle>
             <CardDescription>当前筛选 {nodes.length} 个节点</CardDescription>
@@ -1369,7 +1375,7 @@ function ManageView({
   const hasSubscriptionNodes = nodes.some((node) => node.source === "subscription");
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-normal">节点管理</h1>
@@ -1395,7 +1401,7 @@ function ManageView({
         </Alert>
       ) : null}
 
-      <Card>
+      <Card className="overflow-hidden">
         <CardContent className="p-0">
           {nodes.length ? (
             <Table>
@@ -1526,7 +1532,7 @@ function DebugView({ data, themeMode }: { data: DebugResponse; themeMode: ThemeM
   }, [data.nodes, themeMode]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-3">
         <MetricCard label="调用总数" value={data.total_calls || 0} />
         <MetricCard label="成功调用" value={data.total_success || 0} tone="success" />
@@ -1538,8 +1544,8 @@ function DebugView({ data, themeMode }: { data: DebugResponse; themeMode: ThemeM
         <ChartCard title="失败排行" option={failureOption} deps={[failureOption]} />
       </div>
 
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b border-border/60 bg-muted/25">
           <CardTitle>节点诊断</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -1602,8 +1608,8 @@ function LogsView({
   onRefresh: () => void;
 }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <Card className="overflow-hidden">
+      <CardHeader className="flex flex-col gap-3 border-b border-border/60 bg-muted/25 md:flex-row md:items-center md:justify-between">
         <div>
           <CardTitle>控制台日志</CardTitle>
           <CardDescription>最近缓冲日志</CardDescription>
@@ -1619,7 +1625,7 @@ function LogsView({
           </Button>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-5">
         <Textarea
           ref={logsRef}
           value={logs}
@@ -1656,7 +1662,7 @@ function OtaView({
   const progress = Math.max(0, Math.min(100, status?.status?.progress || 0));
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-normal">OTA 更新</h1>
@@ -1683,12 +1689,12 @@ function OtaView({
         <MetricCard label="更新状态" value={state} compact />
       </div>
 
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b border-border/60 bg-muted/25">
           <CardTitle>更新配置</CardTitle>
         </CardHeader>
         <CardContent>
-          <form className="space-y-5" onSubmit={onSubmit}>
+          <form className="space-y-5 pt-5" onSubmit={onSubmit}>
             <SwitchField
               label="启用后台更新检查"
               checked={form.enabled}
@@ -1773,7 +1779,7 @@ function SettingsView({
   };
 
   return (
-    <form className="space-y-5" onSubmit={onSubmit}>
+    <form className="space-y-6" onSubmit={onSubmit}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-normal">系统设置</h1>
@@ -2295,8 +2301,8 @@ function LoginDialog({
 
 function LoadingOverlay({ title, detail }: { title: string; detail?: string }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/70 backdrop-blur-sm">
-      <div className="rounded-lg border bg-background px-8 py-7 text-center shadow-lg">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 backdrop-blur-md">
+      <div className="rounded-lg border border-border/80 bg-card px-8 py-7 text-center shadow-2xl">
         <Loader2 className="mx-auto mb-4 h-9 w-9 animate-spin text-primary" />
         <div className="font-semibold">{title}</div>
         {detail ? <div className="mt-1 text-sm text-muted-foreground">{detail}</div> : null}
@@ -2318,27 +2324,45 @@ function MetricCard({
   tone?: "default" | "success" | "primary" | "destructive";
   compact?: boolean;
 }) {
-  const toneClass = {
-    default: "text-foreground",
-    success: "text-success",
-    primary: "text-primary",
-    destructive: "text-destructive"
+  const toneStyle = {
+    default: {
+      value: "text-foreground",
+      bar: "bg-border",
+      wash: "from-muted/50"
+    },
+    success: {
+      value: "text-success",
+      bar: "bg-success",
+      wash: "from-success/10"
+    },
+    primary: {
+      value: "text-primary",
+      bar: "bg-primary",
+      wash: "from-primary/10"
+    },
+    destructive: {
+      value: "text-destructive",
+      bar: "bg-destructive",
+      wash: "from-destructive/10"
+    }
   }[tone];
 
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
+    <Card className="overflow-hidden">
+      <CardContent className="relative p-4">
+        <div className={cn("absolute inset-x-0 top-0 h-0.5", toneStyle.bar)} />
+        <div className={cn("absolute inset-0 bg-gradient-to-br to-transparent", toneStyle.wash)} />
+        <div className="relative text-xs font-medium uppercase text-muted-foreground">{label}</div>
         <div
           className={cn(
-            "mt-2 truncate font-mono font-semibold tracking-normal",
+            "relative mt-2 truncate font-mono font-semibold tracking-normal",
             compact ? "text-xl" : "text-3xl",
-            toneClass
+            toneStyle.value
           )}
         >
           {value}
         </div>
-        {detail ? <div className="mt-1 text-xs text-muted-foreground">{detail}</div> : null}
+        {detail ? <div className="relative mt-1 text-xs text-muted-foreground">{detail}</div> : null}
       </CardContent>
     </Card>
   );
@@ -2355,11 +2379,14 @@ function ChartCard({
 }) {
   const ref = useEChart(option, deps);
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle>{title}</CardTitle>
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b border-border/60 bg-muted/25 pb-3">
+        <CardTitle className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-primary" />
+          {title}
+        </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-4">
         <div ref={ref} className="h-[260px] w-full" />
       </CardContent>
     </Card>
@@ -2368,11 +2395,11 @@ function ChartCard({
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <Card>
-      <CardHeader>
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b border-border/60 bg-muted/25 py-4">
         <CardTitle>{title}</CardTitle>
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className="pt-5">{children}</CardContent>
     </Card>
   );
 }
@@ -2404,7 +2431,7 @@ function SwitchField({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex min-h-9 items-center justify-between gap-4 rounded-md border px-3 py-2">
+    <div className="flex min-h-9 items-center justify-between gap-4 rounded-md border border-input/80 bg-background/55 px-3 py-2 transition-colors hover:border-primary/35 hover:bg-accent/45">
       <Label className="leading-5">{label}</Label>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>
@@ -2412,7 +2439,14 @@ function SwitchField({
 }
 
 function EmptyState({ label }: { label: string }) {
-  return <div className="p-12 text-center text-sm text-muted-foreground">{label}</div>;
+  return (
+    <div className="p-12 text-center text-sm text-muted-foreground">
+      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-dashed border-primary/35 bg-primary/10 text-primary">
+        <FileText className="h-4 w-4" />
+      </div>
+      {label}
+    </div>
+  );
 }
 
 function QualityBar({ latency }: { latency: number }) {
@@ -2428,8 +2462,11 @@ function QualityBar({ latency }: { latency: number }) {
             ? "bg-warning"
             : "bg-destructive";
   return (
-    <div className="h-2 min-w-16 flex-1 overflow-hidden rounded-full bg-muted">
-      <div className={cn("h-full rounded-full", color)} style={{ width: `${width}%` }} />
+    <div className="h-2 min-w-16 flex-1 overflow-hidden rounded-full bg-muted/80">
+      <div
+        className={cn("h-full rounded-full shadow-sm", color)}
+        style={{ width: `${width}%` }}
+      />
     </div>
   );
 }
@@ -2444,7 +2481,7 @@ function TimelineDots({ node }: { node: NodeSnapshot }) {
           key={`${event.time}-${index}`}
           title={`${event.latency_ms}ms`}
           className={cn(
-            "h-2.5 w-2.5 rounded-full",
+            "h-2.5 w-2.5 rounded-full ring-2 ring-background",
             event.success ? "bg-success" : "bg-destructive"
           )}
         />
@@ -2644,13 +2681,13 @@ function chartPalette(mode?: ThemeMode) {
     (mode === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches) ||
     (!mode && document.documentElement.classList.contains("dark"));
   return {
-    background: isDark ? "#09090b" : "#ffffff",
-    foreground: isDark ? "#fafafa" : "#09090b",
-    muted: isDark ? "#a1a1aa" : "#71717a",
-    border: isDark ? "#27272a" : "#e4e4e7",
-    primary: isDark ? "#fafafa" : "#18181b",
-    success: "#16a34a",
-    warning: "#f59e0b",
+    background: isDark ? "#111827" : "#ffffff",
+    foreground: isDark ? "#f8fafc" : "#0f172a",
+    muted: isDark ? "#cbd5e1" : "#64748b",
+    border: isDark ? "#334155" : "#dbe4ef",
+    primary: "#018eee",
+    success: "#16a36a",
+    warning: "#f59f0b",
     destructive: "#dc2626"
   };
 }
