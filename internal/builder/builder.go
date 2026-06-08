@@ -105,6 +105,7 @@ func Build(cfg *config.Config) (option.Options, error) {
 	// Determine which components to enable based on mode
 	enablePoolInbound := cfg.Mode == "pool" || cfg.Mode == "hybrid"
 	enableMultiPort := cfg.Mode == "multi-port" || cfg.Mode == "hybrid"
+	enablePoolOutbound := enablePoolInbound || enableMultiPort
 
 	if !enablePoolInbound && !enableMultiPort {
 		return option.Options{}, fmt.Errorf("unsupported mode %s", cfg.Mode)
@@ -117,6 +118,8 @@ func Build(cfg *config.Config) (option.Options, error) {
 			return option.Options{}, err
 		}
 		inbounds = append(inbounds, inbound)
+	}
+	if enablePoolOutbound {
 		poolOptions := poolout.Options{
 			Mode:              cfg.Pool.Mode,
 			Members:           memberTags,
@@ -125,13 +128,16 @@ func Build(cfg *config.Config) (option.Options, error) {
 			RetryEnabled:      cfg.Pool.RetryEnabledOrDefault(),
 			RetryAttempts:     cfg.Pool.RetryAttempts,
 			Metadata:          metadata,
+			SkipMonitor:       !enablePoolInbound,
 		}
 		outbounds = append(outbounds, option.Outbound{
 			Type:    poolout.Type,
 			Tag:     poolout.Tag,
 			Options: &poolOptions,
 		})
-		route.Final = poolout.Tag
+		if enablePoolInbound {
+			route.Final = poolout.Tag
+		}
 	}
 
 	// Build multi-port inbounds (one port per node)

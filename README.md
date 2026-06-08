@@ -394,6 +394,7 @@ easy-proxies can self-update from GitHub Releases when `update.enabled` is enabl
 - `dev` channel tracks the fixed `dev` prerelease tag refreshed from `main`/`master`; checks read `version.json` directly from that tag's release download URL, then download and verify the binary before waiting for confirmation in the WebUI or `POST /api/update/apply`.
 - OTA assets are bare binaries named `easy-proxies-linux-amd64` / `easy-proxies-linux-arm64` plus `.sha256`.
 - OTA downloads use GitHub Releases download URLs directly; `proxy_base_url` is kept only for old config compatibility.
+- Enable `update.use_fastest_node` to route OTA checks and downloads through the current lowest-latency node.
 - Manual installation assets remain available as `easy-proxies-linux-amd64.tar.gz` / `easy-proxies-linux-arm64.tar.gz`.
 - Version metadata is injected at build time and exposed via `easy-proxies -version` and `GET /api/version`.
 

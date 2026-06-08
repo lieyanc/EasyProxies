@@ -835,11 +835,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"download_proxies":       []string{},
 			},
 			"update": map[string]any{
-				"enabled":        false,
-				"channel":        "stable",
-				"check_interval": "1h",
-				"proxy_base_url": "",
-				"repo":           "lieyanc/easy-proxies",
+				"enabled":          false,
+				"channel":          "stable",
+				"check_interval":   "1h",
+				"proxy_base_url":   "",
+				"repo":             "lieyanc/easy-proxies",
+				"use_fastest_node": false,
 			},
 		}
 		if cfg != nil {
@@ -881,11 +882,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"download_proxies":       cfg.GeoIP.DownloadProxies,
 			}
 			resp["update"] = map[string]any{
-				"enabled":        cfg.Update.Enabled,
-				"channel":        cfg.Update.Channel,
-				"check_interval": cfg.Update.CheckInterval.String(),
-				"proxy_base_url": cfg.Update.ProxyBaseURL,
-				"repo":           cfg.Update.Repo,
+				"enabled":          cfg.Update.Enabled,
+				"channel":          cfg.Update.Channel,
+				"check_interval":   cfg.Update.CheckInterval.String(),
+				"proxy_base_url":   cfg.Update.ProxyBaseURL,
+				"repo":             cfg.Update.Repo,
+				"use_fastest_node": cfg.Update.UseFastestNode,
 			}
 		}
 		writeJSON(w, resp)
@@ -935,11 +937,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				DownloadProxies     []string `json:"download_proxies"`
 			} `json:"geoip"`
 			Update *struct {
-				Enabled       bool   `json:"enabled"`
-				Channel       string `json:"channel"`
-				CheckInterval string `json:"check_interval"`
-				ProxyBaseURL  string `json:"proxy_base_url"`
-				Repo          string `json:"repo"`
+				Enabled        bool   `json:"enabled"`
+				Channel        string `json:"channel"`
+				CheckInterval  string `json:"check_interval"`
+				ProxyBaseURL   string `json:"proxy_base_url"`
+				Repo           string `json:"repo"`
+				UseFastestNode bool   `json:"use_fastest_node"`
 			} `json:"update"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1067,6 +1070,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			nextCfg.Update.ProxyBaseURL = strings.TrimRight(strings.TrimSpace(req.Update.ProxyBaseURL), "/")
 			nextCfg.Update.Repo = strings.TrimSpace(req.Update.Repo)
+			nextCfg.Update.UseFastestNode = req.Update.UseFastestNode
 			if nextCfg.Update.CheckInterval <= 0 {
 				nextCfg.Update.CheckInterval = time.Hour
 			}

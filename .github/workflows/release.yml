@@ -59,6 +59,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: internal/monitor/web/package-lock.json
+
+      - name: Build embedded monitor UI
+        run: make web-build
+
       - name: Run tests
         run: go test ./...
 
@@ -90,6 +100,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: internal/monitor/web/package-lock.json
+
+      - name: Build embedded monitor UI
+        run: make web-build
 
       - name: Build binary and archive
         env:

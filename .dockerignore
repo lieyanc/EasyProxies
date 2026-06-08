@@ -5,3 +5,4 @@ config*.yml
 *.md
 bin
 **/node_modules
+internal/monitor/assets

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,6 +92,52 @@ func TestCheckOnlySelectsNewestPrerelease(t *testing.T) {
 	}
 	if result.LatestVersion != remoteVersion {
 		t.Fatalf("expected latest prerelease, got %q", result.LatestVersion)
+	}
+}
+
+func TestCheckOnlyUsesFastestDialer(t *testing.T) {
+	originalVersion := version.Version
+	defer func() { version.Version = originalVersion }()
+	version.Version = "v1.0.0"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/owner/repo/releases/latest" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(releaseInfo{
+			TagName: "v1.4.0",
+			Assets:  []assetInfo{},
+		})
+	}))
+	defer server.Close()
+	withGitHubAPIBaseURL(t, server.URL)
+
+	dialer := &recordingDialer{}
+	u := testUpdater(Config{
+		Channel:        "stable",
+		Repo:           "owner/repo",
+		UseFastestNode: true,
+		ProxyDialerTag: "proxy-pool",
+	})
+	u.SetDialerProvider(func(tag string, fastest bool) (NetDialer, bool) {
+		if tag != "proxy-pool" {
+			t.Fatalf("unexpected dialer tag: %s", tag)
+		}
+		if !fastest {
+			t.Fatalf("expected fastest dialer request")
+		}
+		return dialer, true
+	})
+
+	result, err := u.CheckOnly(context.Background())
+	if err != nil {
+		t.Fatalf("CheckOnly returned error: %v", err)
+	}
+	if !result.HasUpdate {
+		t.Fatalf("expected update to be available")
+	}
+	if dialer.calls.Load() == 0 {
+		t.Fatalf("expected HTTP request to use injected dialer")
 	}
 }
 
@@ -199,6 +247,16 @@ func TestApplyPendingMovesToApplyingBeforeAsyncRestart(t *testing.T) {
 	}
 
 	time.Sleep(250 * time.Millisecond)
+}
+
+type recordingDialer struct {
+	calls atomic.Int32
+}
+
+func (d *recordingDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	d.calls.Add(1)
+	var nd net.Dialer
+	return nd.DialContext(ctx, network, address)
 }
 
 func testUpdater(cfg Config) *Updater {

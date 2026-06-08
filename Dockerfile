@@ -1,3 +1,10 @@
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS web-builder
+WORKDIR /src/internal/monitor/web
+COPY internal/monitor/web/package.json internal/monitor/web/package-lock.json ./
+RUN npm ci
+COPY internal/monitor/web/ ./
+RUN npm run build
+
 FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG TARGETARCH
 WORKDIR /src
@@ -8,6 +15,7 @@ COPY . .
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
+COPY --from=web-builder /src/internal/monitor/assets ./internal/monitor/assets
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -trimpath \
     -tags "with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api" \
     -ldflags "-s -w -X easy-proxies/internal/version.Version=${VERSION} -X easy-proxies/internal/version.Commit=${COMMIT} -X easy-proxies/internal/version.BuildTime=${BUILD_TIME}" \

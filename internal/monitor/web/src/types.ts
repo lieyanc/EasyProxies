@@ -173,8 +173,8 @@ export type UpdateConfig = {
   enabled?: boolean;
   channel?: string;
   check_interval?: string;
-  proxy_base_url?: string;
   repo?: string;
+  use_fastest_node?: boolean;
 };
 
 export type UpdateStatusResponse = {

@@ -37,6 +37,9 @@ vendor/
 node_modules/
 *.tsbuildinfo
 
+# Generated monitor frontend assets; CI builds these before Go compilation.
+internal/monitor/assets/
+
 # Test artifacts
 coverage.out
 coverage.html

@@ -236,6 +236,7 @@ make install-systemd
 - `dev` 通道跟踪固定的 `dev` 预发布 tag；检查时直接从该 tag 的 release 下载地址读取 `version.json`，再下载校验二进制并等待 WebUI 或 `POST /api/update/apply` 确认。
 - OTA 使用裸二进制资产：`easy-proxies-linux-amd64` / `easy-proxies-linux-arm64`，并要求同时存在 `.sha256`。
 - OTA 下载直接使用 GitHub Releases 下载地址；`proxy_base_url` 仅保留用于兼容旧配置。
+- 可开启 `update.use_fastest_node`，让 OTA 检查和下载走当前最低延迟节点。
 - 人工安装继续使用 `easy-proxies-linux-amd64.tar.gz` / `easy-proxies-linux-arm64.tar.gz`。
 - 构建时会注入版本信息，可通过 `easy-proxies -version` 和 `GET /api/version` 查看。
 

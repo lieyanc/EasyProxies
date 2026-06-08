@@ -17,12 +17,13 @@ var dialerRegistry sync.Map // map[string]NetDialer
 
 // poolDialerAdapter wraps a poolOutbound to satisfy NetDialer.
 type poolDialerAdapter struct {
-	pool *poolOutbound
+	pool         *poolOutbound
+	modeOverride string
 }
 
 func (a *poolDialerAdapter) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	dest := M.ParseSocksaddr(address)
-	return a.pool.DialContext(ctx, network, dest)
+	return a.pool.dialContext(ctx, network, dest, a.modeOverride)
 }
 
 // registerDialer adds a pool outbound to the global dialer registry.
@@ -37,6 +38,20 @@ func GetDialer(tag string) (NetDialer, bool) {
 		return nil, false
 	}
 	return v.(NetDialer), true
+}
+
+// GetFastestDialer returns a dialer that forces lowest-latency member selection
+// for each request without changing the pool's configured mode.
+func GetFastestDialer(tag string) (NetDialer, bool) {
+	v, ok := dialerRegistry.Load(tag)
+	if !ok {
+		return nil, false
+	}
+	adapter, ok := v.(*poolDialerAdapter)
+	if !ok || adapter.pool == nil {
+		return nil, false
+	}
+	return &poolDialerAdapter{pool: adapter.pool, modeOverride: modeLatency}, true
 }
 
 // ResetDialerRegistry clears the dialer registry (called during config reload).

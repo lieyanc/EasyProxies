@@ -376,6 +376,10 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 }
 
 func (p *poolOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	return p.dialContext(ctx, network, destination, "")
+}
+
+func (p *poolOutbound) dialContext(ctx context.Context, network string, destination M.Socksaddr, modeOverride string) (net.Conn, error) {
 	maxAttempts := p.maxAttempts()
 	singleMember := len(p.options.Members) <= 1
 	var tried map[string]bool
@@ -384,7 +388,7 @@ func (p *poolOutbound) DialContext(ctx context.Context, network string, destinat
 	}
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		member, err := p.pickMemberFiltered(network, tried)
+		member, err := p.pickMemberFilteredWithMode(network, tried, modeOverride)
 		if err != nil {
 			if lastErr != nil {
 				return nil, fmt.Errorf("%w (after %d attempt(s); last: %v)", err, attempt-1, lastErr)
@@ -482,6 +486,10 @@ func (p *poolOutbound) maxAttempts() int {
 // When `tried` is nil or every healthy member has been tried, falls back to picking
 // any healthy member (ensuring single-member pools retry the same node).
 func (p *poolOutbound) pickMemberFiltered(network string, tried map[string]bool) (*memberState, error) {
+	return p.pickMemberFilteredWithMode(network, tried, "")
+}
+
+func (p *poolOutbound) pickMemberFilteredWithMode(network string, tried map[string]bool, modeOverride string) (*memberState, error) {
 	now := time.Now()
 	candidates := p.getCandidateBuffer()
 
@@ -524,7 +532,7 @@ func (p *poolOutbound) pickMemberFiltered(network string, tried map[string]bool)
 		}
 	}
 
-	member := p.selectMember(candidates)
+	member := p.selectMemberWithMode(candidates, modeOverride)
 	p.putCandidateBuffer(candidates)
 	return member, nil
 }
@@ -626,7 +634,15 @@ func (p *poolOutbound) matchesRegionFilter(member *memberState) bool {
 }
 
 func (p *poolOutbound) selectMember(candidates []*memberState) *memberState {
-	switch p.mode {
+	return p.selectMemberWithMode(candidates, "")
+}
+
+func (p *poolOutbound) selectMemberWithMode(candidates []*memberState, modeOverride string) *memberState {
+	mode := p.mode
+	if modeOverride != "" {
+		mode = modeOverride
+	}
+	switch mode {
 	case modeRandom:
 		p.rngMu.Lock()
 		idx := p.rng.Intn(len(candidates))

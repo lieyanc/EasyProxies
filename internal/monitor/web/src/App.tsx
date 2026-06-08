@@ -192,8 +192,8 @@ const DEFAULT_UPDATE_FORM: Required<UpdateConfig> = {
   enabled: false,
   channel: "stable",
   check_interval: "1h",
-  proxy_base_url: "https://dl.repo.chycloud.top",
-  repo: "lieyanc/easy-proxies"
+  repo: "lieyanc/easy-proxies",
+  use_fastest_node: false
 };
 
 function assertNoPayloadError(payload: { error?: string }) {
@@ -796,8 +796,8 @@ function App() {
             enabled: updateForm.enabled,
             channel: updateForm.channel,
             check_interval: updateForm.check_interval || "1h",
-            proxy_base_url: updateForm.proxy_base_url,
-            repo: updateForm.repo
+            repo: updateForm.repo,
+            use_fastest_node: updateForm.use_fastest_node
           }
         })
       });
@@ -1700,6 +1700,13 @@ function OtaView({
               checked={form.enabled}
               onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, enabled }))}
             />
+            <SwitchField
+              label="下载走最快节点"
+              checked={form.use_fastest_node}
+              onCheckedChange={(use_fastest_node) =>
+                setForm((prev) => ({ ...prev, use_fastest_node }))
+              }
+            />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="更新通道">
                 <Select
@@ -1722,15 +1729,6 @@ function OtaView({
                     setForm((prev) => ({ ...prev, check_interval: event.target.value }))
                   }
                   placeholder="1h"
-                />
-              </Field>
-              <Field label="Release 代理">
-                <Input
-                  value={form.proxy_base_url}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, proxy_base_url: event.target.value }))
-                  }
-                  placeholder="https://dl.repo.chycloud.top"
                 />
               </Field>
               <Field label="GitHub 仓库">
@@ -2637,8 +2635,8 @@ function normalizeUpdateForm(update: UpdateConfig): Required<UpdateConfig> {
     enabled: Boolean(update.enabled),
     channel: update.channel || "stable",
     check_interval: update.check_interval || "1h",
-    proxy_base_url: update.proxy_base_url || DEFAULT_UPDATE_FORM.proxy_base_url,
-    repo: update.repo || DEFAULT_UPDATE_FORM.repo
+    repo: update.repo || DEFAULT_UPDATE_FORM.repo,
+    use_fastest_node: Boolean(update.use_fastest_node)
   };
 }
 

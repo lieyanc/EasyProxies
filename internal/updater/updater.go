@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,11 +24,13 @@ import (
 )
 
 type Config struct {
-	Enabled       bool          `json:"enabled"`
-	Channel       string        `json:"channel"`
-	CheckInterval time.Duration `json:"check_interval"`
-	ProxyBaseURL  string        `json:"proxy_base_url"`
-	Repo          string        `json:"repo"`
+	Enabled        bool          `json:"enabled"`
+	Channel        string        `json:"channel"`
+	CheckInterval  time.Duration `json:"check_interval"`
+	ProxyBaseURL   string        `json:"proxy_base_url"`
+	Repo           string        `json:"repo"`
+	UseFastestNode bool          `json:"use_fastest_node"`
+	ProxyDialerTag string        `json:"proxy_dialer_tag"`
 }
 
 type Status struct {
@@ -56,11 +59,18 @@ type RestartHooks struct {
 	OnExecFailure func(error)
 }
 
+type NetDialer interface {
+	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+type DialerProvider func(tag string, fastest bool) (NetDialer, bool)
+
 type Updater struct {
-	cfg     func() Config
-	dataDir func() string
-	logger  *log.Logger
-	hooks   RestartHooks
+	cfg            func() Config
+	dataDir        func() string
+	logger         *log.Logger
+	hooks          RestartHooks
+	dialerProvider DialerProvider
 
 	mu     sync.RWMutex
 	status Status
@@ -110,6 +120,12 @@ func (u *Updater) Status() Status {
 	s := u.status
 	s.CurrentVersion = version.Version
 	return s
+}
+
+func (u *Updater) SetDialerProvider(provider DialerProvider) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.dialerProvider = provider
 }
 
 func (u *Updater) CheckOnly(ctx context.Context) (CheckResult, error) {
@@ -292,7 +308,7 @@ func (u *Updater) performUpdate(ctx context.Context) {
 	u.status.Progress = progressReleaseFound
 	u.mu.Unlock()
 
-	binaryPath, err := u.download(ctx, release)
+	binaryPath, err := u.download(ctx, cfg, release)
 	if err != nil {
 		u.setError("download failed: " + err.Error())
 		return
@@ -353,6 +369,29 @@ func (u *Updater) notifyExecFailure(err error) {
 	u.hooks.OnExecFailure(err)
 }
 
+func (u *Updater) httpClient(cfg Config) (*http.Client, error) {
+	if !cfg.UseFastestNode {
+		return http.DefaultClient, nil
+	}
+
+	u.mu.RLock()
+	provider := u.dialerProvider
+	u.mu.RUnlock()
+	if provider == nil {
+		return nil, fmt.Errorf("fastest node dialer provider is not configured")
+	}
+
+	dialer, ok := provider(cfg.ProxyDialerTag, true)
+	if !ok || dialer == nil {
+		return nil, fmt.Errorf("fastest node dialer %q is not available", cfg.ProxyDialerTag)
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = dialer.DialContext
+	return &http.Client{Transport: transport}, nil
+}
+
 type releaseInfo struct {
 	TagName         string      `json:"tag_name"`
 	TargetCommitish string      `json:"target_commitish"`
@@ -403,7 +442,11 @@ func (u *Updater) checkStableForUpdate(ctx context.Context, cfg Config) (*releas
 		return nil, false, err
 	}
 	setGitHubAPIHeaders(req)
-	resp, err := http.DefaultClient.Do(req)
+	client, err := u.httpClient(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, false, err
 	}
@@ -436,7 +479,7 @@ func (u *Updater) checkDevForUpdate(ctx context.Context, cfg Config) (*releaseIn
 	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	if err := u.loadReleaseVersion(checkCtx, &release); err != nil {
+	if err := u.loadReleaseVersion(checkCtx, cfg, &release); err != nil {
 		if isHTTPStatus(err, http.StatusNotFound) {
 			u.logger.Printf("update: no dev release metadata found for repo %s", cfg.Repo)
 			return nil, false, nil
@@ -476,7 +519,7 @@ func (u *Updater) devReleaseInfo(cfg Config) releaseInfo {
 	}
 }
 
-func (u *Updater) loadReleaseVersion(ctx context.Context, release *releaseInfo) error {
+func (u *Updater) loadReleaseVersion(ctx context.Context, cfg Config, release *releaseInfo) error {
 	var versionAsset *assetInfo
 	for i := range release.Assets {
 		if release.Assets[i].Name == "version.json" {
@@ -496,7 +539,11 @@ func (u *Updater) loadReleaseVersion(ctx context.Context, release *releaseInfo) 
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client, err := u.httpClient(cfg)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -647,7 +694,7 @@ func isHTTPStatus(err error, statusCode int) bool {
 	return errors.As(err, &statusErr) && statusErr.StatusCode == statusCode
 }
 
-func (u *Updater) download(ctx context.Context, release *releaseInfo) (string, error) {
+func (u *Updater) download(ctx context.Context, cfg Config, release *releaseInfo) (string, error) {
 	u.mu.Lock()
 	u.status.State = "downloading"
 	u.status.Progress = progressDownloadStart
@@ -688,7 +735,7 @@ func (u *Updater) download(ctx context.Context, release *releaseInfo) (string, e
 	if downloadURL == "" {
 		return "", fmt.Errorf("asset %s in release %s has empty download URL", targetName, release.TagName)
 	}
-	if err := u.downloadFile(ctx, downloadURL, tmpPath, binaryAsset.Size); err != nil {
+	if err := u.downloadFile(ctx, cfg, downloadURL, tmpPath, binaryAsset.Size); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("download binary: %w", err)
 	}
@@ -702,7 +749,7 @@ func (u *Updater) download(ctx context.Context, release *releaseInfo) (string, e
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("asset %s.sha256 in release %s has empty download URL", targetName, release.TagName)
 	}
-	expectedHash, err := u.fetchSHA256(ctx, sha256URL)
+	expectedHash, err := u.fetchSHA256(ctx, cfg, sha256URL)
 	if err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("fetch sha256: %w", err)
@@ -731,12 +778,16 @@ func (u *Updater) download(ctx context.Context, release *releaseInfo) (string, e
 	return finalPath, nil
 }
 
-func (u *Updater) downloadFile(ctx context.Context, url, destPath string, expectedSize int64) error {
+func (u *Updater) downloadFile(ctx context.Context, cfg Config, url, destPath string, expectedSize int64) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client, err := u.httpClient(cfg)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -792,12 +843,16 @@ func (u *Updater) downloadFile(ctx context.Context, url, destPath string, expect
 	return nil
 }
 
-func (u *Updater) fetchSHA256(ctx context.Context, url string) (string, error) {
+func (u *Updater) fetchSHA256(ctx context.Context, cfg Config, url string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client, err := u.httpClient(cfg)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -981,6 +1036,10 @@ func normalizeConfig(cfg Config) Config {
 	cfg.Repo = strings.TrimSpace(cfg.Repo)
 	if cfg.Repo == "" {
 		cfg.Repo = "lieyanc/easy-proxies"
+	}
+	cfg.ProxyDialerTag = strings.TrimSpace(cfg.ProxyDialerTag)
+	if cfg.ProxyDialerTag == "" {
+		cfg.ProxyDialerTag = "proxy-pool"
 	}
 	return cfg
 }

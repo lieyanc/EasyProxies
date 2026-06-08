@@ -38,12 +38,14 @@ log:
 # check_interval: 后台检查间隔，默认 1h
 # proxy_base_url: 已废弃；OTA 现在直接使用 GitHub Releases 下载地址
 # repo: GitHub 仓库 owner/name
+# use_fastest_node: OTA 检查和下载是否走当前最低延迟节点，默认 false
 update:
   enabled: false
   channel: stable
   check_interval: 1h
   proxy_base_url: ""
   repo: lieyanc/easy-proxies
+  use_fastest_node: false
 
 # 全局跳过 SSL 证书验证（默认 false，不建议在生产环境启用）
 skip_cert_verify: false

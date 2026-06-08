@@ -15,11 +15,13 @@ VERSION_PKG ?= easy-proxies/internal/version
 BUILD_TAGS ?= with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api
 LDFLAGS ?= -s -w -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).BuildTime=$(BUILD_TIME)
 
-.PHONY: all build web-build run test clean package install install-systemd docker-build
+.PHONY: all build go-build web-build run test clean package install install-systemd docker-build
 
 all: build
 
-build:
+build: web-build go-build
+
+go-build:
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -trimpath -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) $(CMD)
 
 web-build:
@@ -29,12 +31,13 @@ web-build:
 run: build
 	./$(BINARY_NAME) -config $(CONFIG)
 
-test:
+test: web-build
 	go test ./...
 
 clean:
 	rm -f $(BINARY_NAME)
 	rm -rf $(BUILD_DIR)
+	rm -rf internal/monitor/assets
 
 package: build
 	mkdir -p $(BUILD_DIR)

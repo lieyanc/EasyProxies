@@ -64,11 +64,12 @@ type GeoIPConfig struct {
 
 // UpdateConfig controls OTA update checks and release downloads.
 type UpdateConfig struct {
-	Enabled       bool          `yaml:"enabled" json:"enabled"`
-	Channel       string        `yaml:"channel" json:"channel"`               // stable / dev
-	CheckInterval time.Duration `yaml:"check_interval" json:"check_interval"` // default 1h
-	ProxyBaseURL  string        `yaml:"proxy_base_url" json:"proxy_base_url"` // deprecated compatibility field
-	Repo          string        `yaml:"repo" json:"repo"`                     // GitHub repo, owner/name
+	Enabled        bool          `yaml:"enabled" json:"enabled"`
+	Channel        string        `yaml:"channel" json:"channel"`                   // stable / dev
+	CheckInterval  time.Duration `yaml:"check_interval" json:"check_interval"`     // default 1h
+	ProxyBaseURL   string        `yaml:"proxy_base_url" json:"proxy_base_url"`     // deprecated compatibility field
+	Repo           string        `yaml:"repo" json:"repo"`                         // GitHub repo, owner/name
+	UseFastestNode bool          `yaml:"use_fastest_node" json:"use_fastest_node"` // route OTA traffic through lowest-latency node
 }
 
 // ListenerConfig defines how the HTTP/SOCKS5 mixed proxy should listen for clients.

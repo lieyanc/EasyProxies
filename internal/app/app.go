@@ -13,6 +13,7 @@ import (
 	"easy-proxies/internal/boxmgr"
 	"easy-proxies/internal/config"
 	"easy-proxies/internal/monitor"
+	"easy-proxies/internal/outbound/pool"
 	"easy-proxies/internal/subscription"
 	"easy-proxies/internal/updater"
 )
@@ -88,6 +89,12 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			},
 		},
 	)
+	upd.SetDialerProvider(func(tag string, fastest bool) (updater.NetDialer, bool) {
+		if fastest {
+			return pool.GetFastestDialer(tag)
+		}
+		return pool.GetDialer(tag)
+	})
 	if server := boxMgr.MonitorServer(); server != nil {
 		server.SetUpdater(upd)
 	}
@@ -134,10 +141,12 @@ func Run(ctx context.Context, cfg *config.Config) error {
 
 func updaterConfig(cfg config.UpdateConfig) updater.Config {
 	return updater.Config{
-		Enabled:       cfg.Enabled,
-		Channel:       cfg.Channel,
-		CheckInterval: cfg.CheckInterval,
-		ProxyBaseURL:  cfg.ProxyBaseURL,
-		Repo:          cfg.Repo,
+		Enabled:        cfg.Enabled,
+		Channel:        cfg.Channel,
+		CheckInterval:  cfg.CheckInterval,
+		ProxyBaseURL:   cfg.ProxyBaseURL,
+		Repo:           cfg.Repo,
+		UseFastestNode: cfg.UseFastestNode,
+		ProxyDialerTag: pool.Tag,
 	}
 }
