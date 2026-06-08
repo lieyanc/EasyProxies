@@ -1,0 +1,71 @@
+name: GHCR Cleanup
+
+on:
+  schedule:
+    - cron: '23 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup-sha-images:
+    name: Delete old SHA images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delete SHA-tagged package versions older than 7 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE_NAME: easy-proxies
+          CUTOFF_DAYS: "7"
+        run: |
+          set -euo pipefail
+
+          cutoff="$(date -u -d "${CUTOFF_DAYS} days ago" +%s)"
+          list_path="/users/${OWNER}/packages/container/${PACKAGE_NAME}/versions"
+          delete_path="/users/${OWNER}/packages/container/${PACKAGE_NAME}/versions"
+
+          if ! gh api "${list_path}?per_page=1" >/dev/null 2>&1; then
+            list_path="/orgs/${OWNER}/packages/container/${PACKAGE_NAME}/versions"
+            delete_path="/orgs/${OWNER}/packages/container/${PACKAGE_NAME}/versions"
+            gh api "${list_path}?per_page=1" >/dev/null
+          fi
+
+          candidates="$(mktemp)"
+          page=1
+
+          while :; do
+            versions="$(gh api "${list_path}?per_page=100&page=${page}")"
+            count="$(jq 'length' <<<"${versions}")"
+            if [[ "${count}" -eq 0 ]]; then
+              break
+            fi
+
+            jq -r --argjson cutoff "${cutoff}" '
+              .[]
+              | {
+                  id,
+                  created_at,
+                  tags: (.metadata.container.tags // [])
+                }
+              | select((.created_at | fromdateiso8601) < $cutoff)
+              | select((.tags | length) > 0)
+              | select(all(.tags[]; startswith("sha-")))
+              | [.id, (.tags | join(",")), .created_at]
+              | @tsv
+            ' <<<"${versions}" >> "${candidates}"
+
+            page=$((page + 1))
+          done
+
+          if [[ ! -s "${candidates}" ]]; then
+            echo "No SHA-only package versions older than ${CUTOFF_DAYS} days."
+            exit 0
+          fi
+
+          while IFS=$'\t' read -r version_id tags created_at; do
+            echo "Deleting package version ${version_id} (${tags}, ${created_at})"
+            gh api --method DELETE "${delete_path}/${version_id}" >/dev/null
+          done < "${candidates}"
