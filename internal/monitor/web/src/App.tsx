@@ -112,16 +112,42 @@ const NAV_ITEMS: Array<{ id: TabId; label: string; icon: typeof LayoutDashboard 
   { id: "settings", label: "设置", icon: Settings }
 ];
 
+type RegionSeed = {
+  value: string;
+  label: string;
+  flag: string;
+  fallback: string;
+};
+
+type RegionVisual = RegionSeed & {
+  color: string;
+  surface: string;
+  border: string;
+  text: string;
+};
+
+type RegionVisuals = Record<string, RegionVisual>;
+
 const REGION_OPTIONS = [
-  { value: "all", label: "ALL" },
-  { value: "jp", label: "JP" },
-  { value: "kr", label: "KR" },
-  { value: "us", label: "US" },
-  { value: "hk", label: "HK" },
-  { value: "tw", label: "TW" },
-  { value: "sg", label: "SG" },
-  { value: "other", label: "OTHER" }
-];
+  { value: "all", label: "ALL", flag: "🌐", fallback: "#018eee" },
+  { value: "jp", label: "JP", flag: "🇯🇵", fallback: "#c91f45" },
+  { value: "kr", label: "KR", flag: "🇰🇷", fallback: "#2855a6" },
+  { value: "us", label: "US", flag: "🇺🇸", fallback: "#3a5796" },
+  { value: "hk", label: "HK", flag: "🇭🇰", fallback: "#d72f2f" },
+  { value: "tw", label: "TW", flag: "🇹🇼", fallback: "#24488f" },
+  { value: "sg", label: "SG", flag: "🇸🇬", fallback: "#d91f36" },
+  { value: "other", label: "OTHER", flag: "◌", fallback: "#64748b" }
+] satisfies RegionSeed[];
+
+const REGION_SEEDS = REGION_OPTIONS.reduce<Record<string, RegionSeed>>((acc, region) => {
+  acc[region.value] = region;
+  return acc;
+}, {});
+
+const REGION_FALLBACK_COLORS = REGION_OPTIONS.reduce<Record<string, string>>((acc, region) => {
+  acc[region.value] = region.fallback;
+  return acc;
+}, {});
 
 const POOL_MODE_OPTIONS = [
   { value: "sequential", label: "sequential" },
@@ -880,7 +906,6 @@ function App() {
           <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 xl:p-7">
             {activeTab === "dashboard" ? (
               <DashboardView
-                nodesData={nodesData}
                 nodes={filteredNodes}
                 allNodes={nodes}
                 stats={stats}
@@ -971,17 +996,20 @@ function Sidebar({
   stars: string;
 }) {
   return (
-    <aside className="hidden h-full w-[272px] shrink-0 border-r border-border/70 bg-card/85 shadow-[1px_0_0_hsl(var(--background)/0.7)] backdrop-blur-xl md:flex md:flex-col">
-      <div className="flex h-16 items-center gap-3 border-b border-border/70 px-5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-[0_10px_24px_hsl(var(--primary)/0.26)]">
+    <aside className="hidden h-full w-[272px] shrink-0 border-r bg-background md:flex md:flex-col">
+      <div className="flex h-16 items-center gap-3 border-b px-5">
+        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <Globe2 className="h-[18px] w-[18px]" />
         </div>
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-foreground">easy-proxies</div>
-          <div className="text-xs text-muted-foreground">Control Monitor</div>
+          <div className="truncate text-sm font-semibold text-foreground">EasyProxies</div>
+          <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+            <Github className="h-3 w-3" />
+            <span>Modified By lieyanc</span>
+          </div>
         </div>
       </div>
-      <nav className="min-h-0 flex-1 space-y-1.5 p-3">
+      <nav className="min-h-0 flex-1 space-y-1 p-2">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const active = activeTab === item.id;
@@ -989,12 +1017,10 @@ function Sidebar({
             <Button
               key={item.id}
               type="button"
-              variant="ghost"
+              variant={active ? "secondary" : "ghost"}
               className={cn(
-                "h-10 w-full justify-start gap-3 px-3",
-                active
-                  ? "bg-primary text-primary-foreground shadow-[0_8px_18px_hsl(var(--primary)/0.22)] hover:bg-primary/95 hover:text-primary-foreground"
-                  : "hover:bg-accent/80"
+                "h-9 w-full justify-start px-3 font-normal",
+                active && "font-medium"
               )}
               onClick={() => onChange(item.id)}
             >
@@ -1004,8 +1030,8 @@ function Sidebar({
           );
         })}
       </nav>
-      <div className="border-t border-border/70 p-4">
-        <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/45 px-3 py-2.5 text-xs text-muted-foreground">
+      <div className="border-t p-4">
+        <div className="flex items-center gap-2 rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
           <Github className="h-3.5 w-3.5 text-primary" />
           <span className="font-medium text-foreground">{stars}</span>
           <span>Stars</span>
@@ -1047,7 +1073,7 @@ function Header({
   const ThemeIcon = themeMode === "dark" ? Moon : themeMode === "light" ? Sun : Circle;
 
   return (
-    <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-border/70 bg-card/80 px-4 py-3 shadow-[0_1px_0_hsl(var(--background)/0.8)] backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between lg:px-6">
+    <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b bg-background px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-6">
       <div className="flex min-w-0 items-center gap-3">
         <div className="md:hidden">
           <Select value={activeTab} onValueChange={(value) => onTabChange(value as TabId)}>
@@ -1063,8 +1089,8 @@ function Header({
             </SelectContent>
           </Select>
         </div>
-        <Badge variant="outline" className="gap-2 border-success/20 bg-success/10 text-success">
-          <span className="h-2 w-2 rounded-full bg-success shadow-[0_0_0_3px_hsl(var(--success)/0.15)]" />
+        <Badge variant="secondary" className="gap-2">
+          <span className="h-2 w-2 rounded-full bg-success" />
           {lastUpdate}
         </Badge>
       </div>
@@ -1100,7 +1126,7 @@ function Header({
 
 function ProbeProgressBar({ progress }: { progress: ProbeProgress }) {
   return (
-    <div className="shrink-0 border-b border-border/70 bg-card/80 px-4 py-3 backdrop-blur-xl lg:px-6">
+    <div className="shrink-0 border-b bg-background px-4 py-3 lg:px-6">
       <div className="flex flex-col gap-2 md:flex-row md:items-center">
         <Progress value={progress.percent} className="h-2 md:flex-1" />
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -1116,7 +1142,6 @@ function ProbeProgressBar({ progress }: { progress: ProbeProgress }) {
 }
 
 function DashboardView({
-  nodesData,
   nodes,
   allNodes,
   stats,
@@ -1129,7 +1154,6 @@ function DashboardView({
   onBlacklist,
   themeMode
 }: {
-  nodesData: NodesResponse;
   nodes: NodeSnapshot[];
   allNodes: NodeSnapshot[];
   stats: {
@@ -1150,29 +1174,24 @@ function DashboardView({
   themeMode: ThemeMode;
 }) {
   const palette = chartPalette(themeMode);
+  const regionVisuals = useFlagRegionVisuals(themeMode);
   const regionOption = useMemo(() => {
-    const totals = nodesData.region_stats || {};
-    const healthy = nodesData.region_healthy || {};
-    const keys = Object.keys(totals).length
-      ? Object.keys(totals)
-      : Array.from(new Set(allNodes.map((node) => node.region || "other")));
+    const pieNodes = allNodes.filter(canCountInRegionPie);
+    const keys = Array.from(new Set(pieNodes.map((node) => node.region || "other")));
 
-    const data = keys.map((key) => {
-      const total = totals[key] ?? allNodes.filter((node) => (node.region || "other") === key).length;
-      const ok =
-        healthy[key] ??
-        allNodes.filter(
-          (node) =>
-            (node.region || "other") === key &&
-            !node.blacklisted &&
-            node.initial_check_done &&
-            node.available
-        ).length;
+    const data = sortRegionKeys(keys).map((key) => {
+      const regionNodes = pieNodes.filter((node) => (node.region || "other") === key);
+      const total = regionNodes.length;
+      const ok = regionNodes.filter(
+        (node) => node.initial_check_done && node.available
+      ).length;
+      const visual = regionVisual(regionVisuals, key);
       return {
         name: key.toUpperCase(),
         value: total,
         itemStyle: {
-          color: ok === 0 ? palette.destructive : ok < total ? palette.warning : palette.primary
+          color: visual.color,
+          opacity: ok === 0 ? 0.46 : ok < total ? 0.74 : 1
         }
       };
     });
@@ -1196,7 +1215,7 @@ function DashboardView({
         }
       ]
     } satisfies echarts.EChartsOption;
-  }, [allNodes, nodesData.region_healthy, nodesData.region_stats, themeMode]);
+  }, [allNodes, regionVisuals, themeMode]);
 
   const latencyOption = useMemo(() => {
     const sorted = [...allNodes]
@@ -1322,21 +1341,27 @@ function DashboardView({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {REGION_OPTIONS.map((region) => (
-          <Button
-            key={region.value}
-            type="button"
-            size="sm"
-            variant={currentRegion === region.value ? "default" : "outline"}
-            onClick={() => onRegionChange(region.value)}
-          >
-            {region.label}
-          </Button>
-        ))}
+        {REGION_OPTIONS.map((region) => {
+          const selected = currentRegion === region.value;
+          const visual = regionVisual(regionVisuals, region.value);
+          return (
+            <Button
+              key={region.value}
+              type="button"
+              size="sm"
+              variant={selected ? "default" : "outline"}
+              className="gap-1.5"
+              onClick={() => onRegionChange(region.value)}
+            >
+              <span className="text-sm leading-none">{visual.flag}</span>
+              {region.label}
+            </Button>
+          );
+        })}
       </div>
 
       <Card className="overflow-hidden">
-        <CardHeader className="flex flex-col gap-3 border-b border-border/60 bg-muted/25 md:flex-row md:items-center md:justify-between">
+        <CardHeader className="flex flex-col gap-3 border-b md:flex-row md:items-center md:justify-between">
           <div>
             <CardTitle>节点状态</CardTitle>
             <CardDescription>当前筛选 {nodes.length} 个节点</CardDescription>
@@ -1346,6 +1371,7 @@ function DashboardView({
           {nodes.length ? (
             <NodeTable
               nodes={nodes}
+              regionVisuals={regionVisuals}
               onProbe={onProbe}
               onRelease={onRelease}
               onBlacklist={onBlacklist}
@@ -1411,7 +1437,7 @@ function ManageView({
                   <TableHead>URI</TableHead>
                   <TableHead>端口</TableHead>
                   <TableHead>来源</TableHead>
-                  <TableHead className="w-[160px]">操作</TableHead>
+                  <TableHead className="w-[180px]">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1430,6 +1456,7 @@ function ManageView({
                     <TableCell>
                       <div className="flex gap-2">
                         <Button type="button" size="sm" variant="outline" onClick={() => onEdit(node)}>
+                          <Wrench className="h-4 w-4" />
                           编辑
                         </Button>
                         <Button
@@ -1438,6 +1465,7 @@ function ManageView({
                           variant="destructive"
                           onClick={() => onDelete(node.name)}
                         >
+                          <Trash2 className="h-4 w-4" />
                           删除
                         </Button>
                       </div>
@@ -1545,7 +1573,7 @@ function DebugView({ data, themeMode }: { data: DebugResponse; themeMode: ThemeM
       </div>
 
       <Card className="overflow-hidden">
-        <CardHeader className="border-b border-border/60 bg-muted/25">
+        <CardHeader className="border-b">
           <CardTitle>节点诊断</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -1609,7 +1637,7 @@ function LogsView({
 }) {
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="flex flex-col gap-3 border-b border-border/60 bg-muted/25 md:flex-row md:items-center md:justify-between">
+      <CardHeader className="flex flex-col gap-3 border-b md:flex-row md:items-center md:justify-between">
         <div>
           <CardTitle>控制台日志</CardTitle>
           <CardDescription>最近缓冲日志</CardDescription>
@@ -1690,7 +1718,7 @@ function OtaView({
       </div>
 
       <Card className="overflow-hidden">
-        <CardHeader className="border-b border-border/60 bg-muted/25">
+        <CardHeader className="border-b">
           <CardTitle>更新配置</CardTitle>
         </CardHeader>
         <CardContent>
@@ -2095,11 +2123,13 @@ function SettingsView({
 
 function NodeTable({
   nodes,
+  regionVisuals,
   onProbe,
   onRelease,
   onBlacklist
 }: {
   nodes: NodeSnapshot[];
+  regionVisuals: RegionVisuals;
   onProbe: (tag: string) => void;
   onRelease: (tag: string) => void;
   onBlacklist: (tag: string) => void;
@@ -2115,21 +2145,21 @@ function NodeTable({
           <TableHead>延迟</TableHead>
           <TableHead>连接</TableHead>
           <TableHead>失败</TableHead>
-          <TableHead className="w-[170px]">操作</TableHead>
+          <TableHead className="w-[190px]">操作</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {nodes.map((node) => {
           const status = nodeStatus(node);
           const latency = node.last_latency_ms ?? -1;
+          const visual = regionVisual(regionVisuals, node.region);
           return (
             <TableRow key={node.tag}>
               <TableCell>
                 <Badge variant={status.variant}>{status.label}</Badge>
               </TableCell>
               <TableCell>
-                <div className="font-medium">{(node.region || "other").toUpperCase()}</div>
-                <div className="font-mono text-xs text-muted-foreground">{node.exit_ip || "-"}</div>
+                <RegionCell region={node.region} exitIp={node.exit_ip} visual={visual} />
               </TableCell>
               <TableCell>
                 <div className="font-medium">{node.name || node.tag}</div>
@@ -2151,10 +2181,12 @@ function NodeTable({
               <TableCell>
                 <div className="flex gap-2">
                   <Button type="button" size="sm" variant="outline" onClick={() => onProbe(node.tag)}>
+                    <Zap className="h-4 w-4" />
                     探测
                   </Button>
                   {node.blacklisted ? (
                     <Button type="button" size="sm" onClick={() => onRelease(node.tag)}>
+                      <RotateCcw className="h-4 w-4" />
                       解封
                     </Button>
                   ) : (
@@ -2164,6 +2196,7 @@ function NodeTable({
                       variant="destructive"
                       onClick={() => onBlacklist(node.tag)}
                     >
+                      <Trash2 className="h-4 w-4" />
                       拉黑
                     </Button>
                   )}
@@ -2174,6 +2207,39 @@ function NodeTable({
         })}
       </TableBody>
     </Table>
+  );
+}
+
+function RegionCell({
+  region,
+  exitIp,
+  visual
+}: {
+  region?: string;
+  exitIp?: string;
+  visual: RegionVisual;
+}) {
+  return (
+    <div className="flex min-w-[112px] items-center gap-2">
+      <span
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-base shadow-sm"
+        style={{
+          background: `linear-gradient(135deg, ${visual.surface}, ${hexToRgba(visual.color, 0.2)})`,
+          borderColor: visual.border,
+          color: visual.text
+        }}
+      >
+        {visual.flag}
+      </span>
+      <span className="min-w-0">
+        <span className="block font-medium" style={{ color: visual.text }}>
+          {(region || "other").toUpperCase()}
+        </span>
+        <span className="block truncate font-mono text-xs text-muted-foreground">
+          {exitIp || "-"}
+        </span>
+      </span>
+    </div>
   );
 }
 
@@ -2299,8 +2365,8 @@ function LoginDialog({
 
 function LoadingOverlay({ title, detail }: { title: string; detail?: string }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 backdrop-blur-md">
-      <div className="rounded-lg border border-border/80 bg-card px-8 py-7 text-center shadow-2xl">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80">
+      <div className="rounded-lg border bg-background px-8 py-7 text-center shadow-lg">
         <Loader2 className="mx-auto mb-4 h-9 w-9 animate-spin text-primary" />
         <div className="font-semibold">{title}</div>
         {detail ? <div className="mt-1 text-sm text-muted-foreground">{detail}</div> : null}
@@ -2378,7 +2444,7 @@ function ChartCard({
   const ref = useEChart(option, deps);
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="border-b border-border/60 bg-muted/25 pb-3">
+      <CardHeader className="border-b pb-3">
         <CardTitle className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-primary" />
           {title}
@@ -2394,7 +2460,7 @@ function ChartCard({
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="border-b border-border/60 bg-muted/25 py-4">
+      <CardHeader className="border-b py-4">
         <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent className="pt-5">{children}</CardContent>
@@ -2429,7 +2495,7 @@ function SwitchField({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex min-h-9 items-center justify-between gap-4 rounded-md border border-input/80 bg-background/55 px-3 py-2 transition-colors hover:border-primary/35 hover:bg-accent/45">
+    <div className="flex min-h-10 items-center justify-between gap-4 rounded-md border bg-background px-3 py-2">
       <Label className="leading-5">{label}</Label>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>
@@ -2439,7 +2505,7 @@ function SwitchField({
 function EmptyState({ label }: { label: string }) {
   return (
     <div className="p-12 text-center text-sm text-muted-foreground">
-      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-dashed border-primary/35 bg-primary/10 text-primary">
+      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-md border border-dashed bg-muted text-muted-foreground">
         <FileText className="h-4 w-4" />
       </div>
       {label}
@@ -2460,7 +2526,7 @@ function QualityBar({ latency }: { latency: number }) {
             ? "bg-warning"
             : "bg-destructive";
   return (
-    <div className="h-2 min-w-16 flex-1 overflow-hidden rounded-full bg-muted/80">
+    <div className="h-2 min-w-16 flex-1 overflow-hidden rounded-full bg-muted">
       <div
         className={cn("h-full rounded-full shadow-sm", color)}
         style={{ width: `${width}%` }}
@@ -2497,6 +2563,12 @@ function nodeStatus(node: NodeSnapshot): {
   if (latency < 0) return { label: "未测试", variant: "muted" };
   if ((node.failure_count || 0) >= 1) return { label: "异常", variant: "destructive" };
   return { label: "在线", variant: "success" };
+}
+
+function canCountInRegionPie(node: NodeSnapshot) {
+  if (node.blacklisted) return false;
+  if (node.initial_check_done && !node.available) return false;
+  return true;
 }
 
 function normalizeCoreForm(
@@ -2653,6 +2725,169 @@ function normalizeInterval(interval: string) {
   return options.find((option) => interval === option || interval.startsWith(option)) || "1h";
 }
 
+function useFlagRegionVisuals(themeMode: ThemeMode): RegionVisuals {
+  const [baseColors, setBaseColors] = useState<Record<string, string>>(REGION_FALLBACK_COLORS);
+
+  useEffect(() => {
+    let mounted = true;
+
+    void resolveFlagRegionColors().then((colors) => {
+      if (mounted) {
+        setBaseColors((current) => ({ ...current, ...colors }));
+      }
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  return useMemo(() => buildRegionVisuals(baseColors, themeMode), [baseColors, themeMode]);
+}
+
+async function resolveFlagRegionColors() {
+  if (typeof document === "undefined") return REGION_FALLBACK_COLORS;
+
+  try {
+    await document.fonts?.ready;
+  } catch {
+    // Continue with fallback emoji/system fonts.
+  }
+
+  const entries = await Promise.all(
+    REGION_OPTIONS.map(async (region) => [
+      region.value,
+      extractBlurredFlagColor(region)
+    ] as const)
+  );
+
+  return Object.fromEntries(entries);
+}
+
+function extractBlurredFlagColor(region: RegionSeed) {
+  if (typeof document === "undefined") return region.fallback;
+
+  try {
+    const size = 64;
+    const scale = Math.min(window.devicePixelRatio || 1, 2);
+    const canvas = document.createElement("canvas");
+    canvas.width = size * scale;
+    canvas.height = size * scale;
+
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return region.fallback;
+
+    ctx.scale(scale, scale);
+    ctx.clearRect(0, 0, size, size);
+    ctx.font = '48px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.filter = "blur(7px) saturate(1.12)";
+    ctx.fillText(region.flag, size / 2, size / 2 + 1);
+
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    return normalizeFlagColor(sampleFlagPixels(pixels), region.fallback);
+  } catch {
+    return region.fallback;
+  }
+}
+
+function sampleFlagPixels(pixels: Uint8ClampedArray) {
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  let totalWeight = 0;
+
+  for (let index = 0; index < pixels.length; index += 4) {
+    const alpha = pixels[index + 3] / 255;
+    if (alpha < 0.06) continue;
+
+    const r = pixels[index];
+    const g = pixels[index + 1];
+    const b = pixels[index + 2];
+    const [, saturation, lightness] = rgbToHsl(r, g, b);
+    const whitePenalty = lightness > 0.86 && saturation < 0.16 ? 0.1 : 1;
+    const grayPenalty = saturation < 0.08 ? 0.2 : 1;
+    const darkPenalty = lightness < 0.12 ? 0.24 : 1;
+    const weight = alpha * (0.18 + saturation * 1.9) * whitePenalty * grayPenalty * darkPenalty;
+
+    red += r * weight;
+    green += g * weight;
+    blue += b * weight;
+    totalWeight += weight;
+  }
+
+  if (totalWeight < 1) return null;
+
+  return {
+    r: Math.round(red / totalWeight),
+    g: Math.round(green / totalWeight),
+    b: Math.round(blue / totalWeight)
+  };
+}
+
+function normalizeFlagColor(
+  sampled: { r: number; g: number; b: number } | null,
+  fallback: string
+) {
+  if (!sampled) return fallback;
+
+  const [hue, saturation, lightness] = rgbToHsl(sampled.r, sampled.g, sampled.b);
+  if (saturation < 0.18) return fallback;
+
+  return hslToHex(hue, clamp(saturation * 1.18, 0.48, 0.82), clamp(lightness, 0.36, 0.56));
+}
+
+function buildRegionVisuals(baseColors: Record<string, string>, themeMode?: ThemeMode) {
+  const isDark = isDarkTheme(themeMode);
+
+  return REGION_OPTIONS.reduce<RegionVisuals>((visuals, region) => {
+    visuals[region.value] = buildRegionVisual(region, baseColors[region.value] || region.fallback, isDark);
+    return visuals;
+  }, {});
+}
+
+function buildRegionVisual(region: RegionSeed, color: string, isDark: boolean): RegionVisual {
+  return {
+    ...region,
+    color,
+    surface: hexToRgba(color, isDark ? 0.2 : 0.12),
+    border: hexToRgba(color, isDark ? 0.5 : 0.34),
+    text: isDark ? mixHex(color, "#ffffff", 0.36) : mixHex(color, "#0f172a", 0.14)
+  };
+}
+
+function regionVisual(visuals: RegionVisuals, region?: string) {
+  const key = normalizeRegionKey(region);
+  if (visuals[key]) return visuals[key];
+
+  const fallback = hashRegionColor(key);
+  return buildRegionVisual(
+    {
+      value: key,
+      label: key.toUpperCase(),
+      flag: REGION_SEEDS[key]?.flag || "◌",
+      fallback
+    },
+    fallback,
+    isDarkTheme()
+  );
+}
+
+function sortRegionKeys(keys: string[]) {
+  const knownOrder = REGION_OPTIONS.map((region) => region.value).filter((key) => key !== "all");
+  const uniqueKeys = Array.from(new Set(keys.map(normalizeRegionKey)));
+
+  return [
+    ...knownOrder.filter((key) => uniqueKeys.includes(key)),
+    ...uniqueKeys.filter((key) => !knownOrder.includes(key))
+  ];
+}
+
+function normalizeRegionKey(region?: string) {
+  return (region || "other").trim().toLowerCase() || "other";
+}
+
 function formatBytes(bytes: number, decimals = 2) {
   if (!bytes || Number.isNaN(bytes) || bytes <= 0) return "0 B";
   const sizes = ["B", "KB", "MB", "GB", "TB"];
@@ -2673,11 +2908,17 @@ function applyThemeMode(mode: ThemeMode) {
   root.classList.toggle("dark", visual === "dark");
 }
 
+function isDarkTheme(mode?: ThemeMode) {
+  if (mode === "dark") return true;
+  if (mode === "light") return false;
+  if (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    return true;
+  }
+  return typeof document !== "undefined" && document.documentElement.classList.contains("dark");
+}
+
 function chartPalette(mode?: ThemeMode) {
-  const isDark =
-    mode === "dark" ||
-    (mode === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches) ||
-    (!mode && document.documentElement.classList.contains("dark"));
+  const isDark = isDarkTheme(mode);
   return {
     background: isDark ? "#111827" : "#ffffff",
     foreground: isDark ? "#f8fafc" : "#0f172a",
@@ -2698,6 +2939,116 @@ function chartTooltip(mode?: ThemeMode, trigger: "item" | "axis" = "item") {
     borderColor: palette.border,
     textStyle: { color: palette.foreground }
   };
+}
+
+function hashRegionColor(region: string) {
+  let hash = 0;
+  for (let index = 0; index < region.length; index += 1) {
+    hash = (hash << 5) - hash + region.charCodeAt(index);
+    hash |= 0;
+  }
+
+  const hue = (((hash % 360) + 360) % 360) / 360;
+  return hslToHex(hue, 0.58, 0.48);
+}
+
+function hexToRgba(hex: string, alpha: number) {
+  const rgb = hexToRgb(hex);
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+}
+
+function mixHex(hex: string, targetHex: string, amount: number) {
+  const color = hexToRgb(hex);
+  const target = hexToRgb(targetHex);
+  const mix = clamp(amount, 0, 1);
+
+  return rgbToHex({
+    r: Math.round(color.r + (target.r - color.r) * mix),
+    g: Math.round(color.g + (target.g - color.g) * mix),
+    b: Math.round(color.b + (target.b - color.b) * mix)
+  });
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "").trim();
+  const value =
+    normalized.length === 3
+      ? normalized
+          .split("")
+          .map((char) => char + char)
+          .join("")
+      : normalized.padEnd(6, "0").slice(0, 6);
+
+  return {
+    r: Number.parseInt(value.slice(0, 2), 16),
+    g: Number.parseInt(value.slice(2, 4), 16),
+    b: Number.parseInt(value.slice(4, 6), 16)
+  };
+}
+
+function rgbToHex({ r, g, b }: { r: number; g: number; b: number }) {
+  return `#${[r, g, b].map((value) => clamp(Math.round(value), 0, 255).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  const red = r / 255;
+  const green = g / 255;
+  const blue = b / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const lightness = (max + min) / 2;
+
+  if (max === min) return [0, 0, lightness];
+
+  const delta = max - min;
+  const saturation =
+    lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+  let hue =
+    max === red
+      ? (green - blue) / delta + (green < blue ? 6 : 0)
+      : max === green
+        ? (blue - red) / delta + 2
+        : (red - green) / delta + 4;
+
+  hue /= 6;
+  return [hue, saturation, lightness];
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number) {
+  let red = lightness;
+  let green = lightness;
+  let blue = lightness;
+
+  if (saturation !== 0) {
+    const q =
+      lightness < 0.5
+        ? lightness * (1 + saturation)
+        : lightness + saturation - lightness * saturation;
+    const p = 2 * lightness - q;
+    red = hueToRgb(p, q, hue + 1 / 3);
+    green = hueToRgb(p, q, hue);
+    blue = hueToRgb(p, q, hue - 1 / 3);
+  }
+
+  return rgbToHex({
+    r: red * 255,
+    g: green * 255,
+    b: blue * 255
+  });
+}
+
+function hueToRgb(p: number, q: number, t: number) {
+  let hue = t;
+  if (hue < 0) hue += 1;
+  if (hue > 1) hue -= 1;
+  if (hue < 1 / 6) return p + (q - p) * 6 * hue;
+  if (hue < 1 / 2) return q;
+  if (hue < 2 / 3) return p + (q - p) * (2 / 3 - hue) * 6;
+  return p;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 export default App;
