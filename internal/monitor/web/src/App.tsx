@@ -853,6 +853,11 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!authenticated) return;
+    void loadUpdateStatus();
+  }, [authenticated, loadUpdateStatus]);
+
   async function loadOtaPage() {
     try {
       const settings = await apiJson<SettingsResponse>("/api/settings");
@@ -961,7 +966,12 @@ function App() {
   return (
     <div className="app-frame h-screen overflow-hidden text-foreground">
       <div className="flex h-full min-h-0">
-        <Sidebar activeTab={activeTab} onChange={changeTab} stars={githubStars} />
+        <Sidebar
+          activeTab={activeTab}
+          onChange={changeTab}
+          stars={githubStars}
+          currentVersion={currentVersion}
+        />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <Header
             activeTab={activeTab}
@@ -1068,11 +1078,13 @@ function App() {
 function Sidebar({
   activeTab,
   onChange,
-  stars
+  stars,
+  currentVersion
 }: {
   activeTab: TabId;
   onChange: (tab: TabId) => void;
   stars: string;
+  currentVersion: string;
 }) {
   return (
     <aside className="hidden h-full w-64 shrink-0 border-r bg-background md:flex md:flex-col">
@@ -1110,6 +1122,12 @@ function Sidebar({
         })}
       </nav>
       <div className="border-t p-4">
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-xs">
+          <span className="text-muted-foreground">Version</span>
+          <span className="min-w-0 truncate rounded-sm bg-primary/10 px-2 py-0.5 font-mono font-semibold text-primary">
+            {currentVersion}
+          </span>
+        </div>
         <div className="flex items-center gap-2 rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
           <Github className="h-3.5 w-3.5 text-primary" />
           <span className="font-medium text-foreground">{stars}</span>
@@ -1414,7 +1432,7 @@ function DashboardView({
       })
       .filter((item) => item.calls > 0)
       .sort((a, b) => b.calls - a.calls)
-      .slice(0, 5);
+      .slice(0, 3);
 
     return {
       totalCalls,
@@ -1427,7 +1445,7 @@ function DashboardView({
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid items-stretch gap-4 lg:grid-cols-3">
         <NodeOverviewCard stats={stats} subscriptionStatus={subscriptionStatus} />
         <RequestOverviewCard
           totalCalls={requestSummary.totalCalls}
@@ -1505,14 +1523,16 @@ function DashboardSummaryCard({
   children: ReactNode;
 }) {
   return (
-    <Card className="h-full overflow-hidden">
+    <Card className="flex h-full min-h-[350px] flex-col overflow-hidden">
       <CardHeader className="flex flex-row items-center gap-3 border-b px-4 py-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <Icon className="h-4 w-4" />
         </div>
         <CardTitle className="text-sm font-semibold tracking-normal">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4 p-4">{children}</CardContent>
+      <CardContent className="flex min-h-0 flex-1 flex-col justify-between gap-4 p-4">
+        {children}
+      </CardContent>
     </Card>
   );
 }
