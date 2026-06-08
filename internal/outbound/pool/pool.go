@@ -906,7 +906,11 @@ func (p *poolOutbound) updateExitIP(ctx context.Context, member *memberState) {
 	if p.monitor == nil || !p.monitor.GeoIPReady() {
 		return
 	}
-	if member.shared != nil && !member.shared.shouldProbeExitIP(time.Now(), p.monitor.ExitIPProbeInterval()) {
+	shouldUpdate, throttleByInterval := p.monitor.ShouldUpdateExitIP(ctx)
+	if !shouldUpdate {
+		return
+	}
+	if throttleByInterval && member.shared != nil && !member.shared.shouldProbeExitIP(time.Now(), p.monitor.ExitIPProbeInterval()) {
 		return
 	}
 

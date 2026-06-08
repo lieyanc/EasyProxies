@@ -40,6 +40,26 @@ export type NodesResponse = {
   region_healthy?: Record<string, number>;
 };
 
+export type AddressProtocol = "http" | "socks5";
+
+export type AddressEntry = {
+  id: string;
+  kind: "pool" | "geoip" | "multi-port";
+  label: string;
+  description?: string;
+  protocol: AddressProtocol;
+  url: string;
+  port?: number;
+  region?: string;
+  node_tag?: string;
+  node_name?: string;
+};
+
+export type AddressesResponse = {
+  mode: string;
+  entries: AddressEntry[];
+};
+
 export type DebugResponse = {
   nodes: NodeSnapshot[];
   total_calls: number;
@@ -99,6 +119,7 @@ export type SettingsResponse = {
   management?: {
     listen?: string;
     password?: string;
+    health_check_interval?: string;
   };
   log?: {
     output?: string;
@@ -115,6 +136,8 @@ export type SettingsResponse = {
     port?: number;
     auto_update_enabled?: boolean;
     auto_update_interval?: string;
+    exit_ip_probe_mode?: string;
+    exit_ip_probe_interval?: string;
     download_proxies?: string[];
   };
   update?: UpdateConfig;
@@ -145,6 +168,7 @@ export type CoreSettingsForm = {
   management: {
     listen: string;
     password: string;
+    health_check_interval: string;
   };
   log: {
     output: string;
@@ -160,6 +184,8 @@ export type CoreSettingsForm = {
     port: string;
     auto_update_enabled: boolean;
     auto_update_interval: string;
+    exit_ip_probe_mode: string;
+    exit_ip_probe_interval: string;
     download_proxies: string;
   };
   subscription: {

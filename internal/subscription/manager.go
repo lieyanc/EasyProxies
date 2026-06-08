@@ -363,6 +363,7 @@ func (m *Manager) doRefresh() {
 		m.status.NodesModified = nodesModified
 		m.mu.Unlock()
 		m.logger.Infof("subscription nodes unchanged, skipping reload")
+		m.probeAfterSubscriptionRefresh()
 		return
 	}
 
@@ -396,7 +397,7 @@ func (m *Manager) doRefresh() {
 	newCfg := m.createNewConfig(nodes)
 
 	// Trigger BoxManager reload with port preservation
-	if err := m.boxMgr.ReloadWithPortMap(newCfg, portMap); err != nil {
+	if err := m.boxMgr.ReloadWithPortMapForSubscriptionRefresh(newCfg, portMap); err != nil {
 		m.logger.Errorf("reload failed: %v", err)
 		m.mu.Lock()
 		m.status.LastError = err.Error()
@@ -412,6 +413,17 @@ func (m *Manager) doRefresh() {
 	m.mu.Unlock()
 
 	m.logger.Infof("subscription refresh completed, %d nodes active", len(nodes))
+}
+
+func (m *Manager) probeAfterSubscriptionRefresh() {
+	m.mu.RLock()
+	timeout := m.baseCfg.SubscriptionRefresh.HealthCheckTimeout
+	m.mu.RUnlock()
+
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	m.boxMgr.ProbeAllForSubscriptionRefresh(timeout)
 }
 
 // getNodesFilePath returns the path to nodes.txt.
@@ -653,8 +665,12 @@ func (m *Manager) fetchSubscription(parent context.Context, subURL string, timeo
 
 // createNewConfig creates a new config with updated nodes while preserving other settings.
 func (m *Manager) createNewConfig(nodes []config.NodeConfig) *config.Config {
-	// Deep copy base config
-	newCfg := *m.baseCfg
+	newCfg := m.boxMgr.CurrentConfigCopy()
+	if newCfg == nil {
+		// Fallback for early startup paths where the box manager has no active config yet.
+		cfgCopy := *m.baseCfg
+		newCfg = &cfgCopy
+	}
 
 	// Process node names
 	for i := range nodes {
@@ -671,7 +687,7 @@ func (m *Manager) createNewConfig(nodes []config.NodeConfig) *config.Config {
 	}
 
 	newCfg.Nodes = nodes
-	return &newCfg
+	return newCfg
 }
 
 type defaultLogger struct{}

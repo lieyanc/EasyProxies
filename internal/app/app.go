@@ -37,6 +37,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		ProxyUsername:       proxyUsername,
 		ProxyPassword:       proxyPassword,
 		ExternalIP:          cfg.ExternalIP,
+		ExitIPProbeMode:     cfg.GeoIP.ExitIPProbeMode,
 		ExitIPProbeInterval: cfg.GeoIP.ExitIPProbeInterval,
 	}
 

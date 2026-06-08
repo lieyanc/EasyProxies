@@ -13,15 +13,19 @@ import {
   Activity,
   BarChart3,
   Bug,
+  ChevronDown,
+  ChevronRight,
   CheckCircle2,
   Circle,
   Clock3,
+  Copy,
   Download,
   FileText,
   Gauge,
   Github,
   Globe2,
   LayoutDashboard,
+  Link2,
   Loader2,
   Lock,
   Moon,
@@ -87,6 +91,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useEChart } from "@/hooks/use-echart";
 import { cn } from "@/lib/utils";
 import type {
+  AddressEntry,
+  AddressesResponse,
+  AddressProtocol,
   ConfigNode,
   CoreSettingsForm,
   DebugResponse,
@@ -161,6 +168,11 @@ const POOL_MODE_OPTIONS = [
   { value: "latency", label: "latency" }
 ];
 
+const EXIT_IP_PROBE_MODE_OPTIONS = [
+  { value: "interval", label: "按间隔" },
+  { value: "subscription_refresh", label: "跟随订阅刷新" }
+];
+
 const EMPTY_PROBE_PROGRESS: ProbeProgress = {
   visible: false,
   total: 0,
@@ -194,7 +206,8 @@ const DEFAULT_CORE_FORM: CoreSettingsForm = {
   },
   management: {
     listen: "",
-    password: ""
+    password: "",
+    health_check_interval: "5m"
   },
   log: {
     output: "stdout",
@@ -210,6 +223,8 @@ const DEFAULT_CORE_FORM: CoreSettingsForm = {
     port: "",
     auto_update_enabled: false,
     auto_update_interval: "24h",
+    exit_ip_probe_mode: "interval",
+    exit_ip_probe_interval: "5m",
     download_proxies: ""
   },
   subscription: {
@@ -268,6 +283,10 @@ function App() {
   const [lastUpdate, setLastUpdate] = useState<string>("System Online");
   const [currentRegion, setCurrentRegion] = useState("all");
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [addressesOpen, setAddressesOpen] = useState(false);
+  const [addressesData, setAddressesData] = useState<AddressesResponse | null>(null);
+  const [addressesLoading, setAddressesLoading] = useState(false);
+  const [addressProtocol, setAddressProtocol] = useState<AddressProtocol>("http");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [probeProgress, setProbeProgress] = useState<ProbeProgress>(EMPTY_PROBE_PROGRESS);
   const [isProbing, setIsProbing] = useState(false);
@@ -399,6 +418,25 @@ function App() {
     },
     [handleApiError]
   );
+
+  const loadAddresses = useCallback(async () => {
+    setAddressesLoading(true);
+    try {
+      const payload = await apiJson<AddressesResponse>("/api/addresses");
+      setAddressesData({ ...payload, entries: payload.entries || [] });
+      setAuthenticated(true);
+      setLoginOpen(false);
+    } catch (error) {
+      handleApiError(error, "连接地址读取失败");
+    } finally {
+      setAddressesLoading(false);
+    }
+  }, [handleApiError]);
+
+  function openAddressesDialog() {
+    setAddressesOpen(true);
+    void loadAddresses();
+  }
 
   const refreshNodes = useCallback(
     async (silent = false) => {
@@ -981,6 +1019,7 @@ function App() {
             autoRefresh={autoRefresh}
             onAutoRefreshToggle={() => setAutoRefresh((value) => !value)}
             onProbeAll={probeAllNodes}
+            onAddresses={openAddressesDialog}
             onExport={exportNodes}
             onRefresh={() => void refreshNodes(false)}
             onRefreshSubscription={refreshSubscription}
@@ -1057,6 +1096,15 @@ function App() {
         error={loginError}
         setPassword={setLoginPassword}
         onSubmit={handleLogin}
+      />
+      <ConnectionAddressesDialog
+        open={addressesOpen}
+        onOpenChange={setAddressesOpen}
+        data={addressesData}
+        loading={addressesLoading}
+        protocol={addressProtocol}
+        onProtocolChange={setAddressProtocol}
+        onReload={loadAddresses}
       />
       <NodeEditorDialog
         open={nodeDialogOpen}
@@ -1145,6 +1193,7 @@ function Header({
   autoRefresh,
   onAutoRefreshToggle,
   onProbeAll,
+  onAddresses,
   onExport,
   onRefresh,
   onRefreshSubscription,
@@ -1159,6 +1208,7 @@ function Header({
   autoRefresh: boolean;
   onAutoRefreshToggle: () => void;
   onProbeAll: () => void;
+  onAddresses: () => void;
   onExport: () => void;
   onRefresh: () => void;
   onRefreshSubscription: () => void;
@@ -1203,6 +1253,10 @@ function Header({
             刷新订阅
           </Button>
         ) : null}
+        <Button type="button" variant="outline" onClick={onAddresses}>
+          <Link2 className="h-4 w-4" />
+          连接地址
+        </Button>
         <Button type="button" variant="outline" onClick={onExport}>
           <Download className="h-4 w-4" />
           导出配置
@@ -1234,6 +1288,236 @@ function ProbeProgressBar({ progress }: { progress: ProbeProgress }) {
       </div>
     </div>
   );
+}
+
+function ConnectionAddressesDialog({
+  open,
+  onOpenChange,
+  data,
+  loading,
+  protocol,
+  onProtocolChange,
+  onReload
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  data: AddressesResponse | null;
+  loading: boolean;
+  protocol: AddressProtocol;
+  onProtocolChange: (protocol: AddressProtocol) => void;
+  onReload: () => void;
+}) {
+  const entries = data?.entries || [];
+  const protocolEntries = useMemo(
+    () => entries.filter((entry) => entry.protocol === protocol),
+    [entries, protocol]
+  );
+  const poolEntries = protocolEntries.filter((entry) => entry.kind === "pool");
+  const geoIPEntries = protocolEntries.filter((entry) => entry.kind === "geoip");
+  const multiPortEntries = protocolEntries.filter((entry) => entry.kind === "multi-port");
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[calc(100vh-2rem)] max-w-3xl gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b px-5 py-4">
+          <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <DialogTitle className="flex items-center gap-2">
+                <Link2 className="h-4 w-4" />
+                连接地址
+              </DialogTitle>
+              <DialogDescription className="mt-2 flex items-center gap-2">
+                <span>运行模式</span>
+                <Badge variant="secondary">{data?.mode || "-"}</Badge>
+              </DialogDescription>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="flex h-9 rounded-md border bg-muted p-0.5">
+                {(["http", "socks5"] as AddressProtocol[]).map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    className={cn(
+                      "h-8 rounded-sm px-3 text-xs font-medium transition-colors",
+                      protocol === item
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    onClick={() => onProtocolChange(item)}
+                  >
+                    {item.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={onReload}
+                disabled={loading}
+                title="刷新地址"
+              >
+                <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+              </Button>
+            </div>
+          </div>
+        </DialogHeader>
+        <div className="scrollbar-thin min-h-0 overflow-y-auto px-5 py-4">
+          {loading ? (
+            <AddressLoadingState />
+          ) : entries.length ? (
+            <div className="space-y-4">
+              <AddressGroup title="单端口入口" entries={poolEntries} />
+              <AddressGroup title="GeoIP 地域路由" entries={geoIPEntries} />
+              <AddressGroup
+                title="独立端口节点"
+                entries={multiPortEntries}
+                collapsible
+                defaultOpen={multiPortEntries.length > 0 && multiPortEntries.length <= 4}
+              />
+              {!protocolEntries.length ? <EmptyState label="当前协议暂无地址" /> : null}
+            </div>
+          ) : (
+            <EmptyState label="暂无连接地址" />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AddressGroup({
+  title,
+  entries,
+  collapsible = false,
+  defaultOpen = true
+}: {
+  title: string;
+  entries: AddressEntry[];
+  collapsible?: boolean;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    setOpen(defaultOpen);
+  }, [defaultOpen, entries.length]);
+
+  if (!entries.length) return null;
+
+  const header = (
+    <div className="flex min-w-0 items-center gap-2">
+      {collapsible ? (
+        open ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )
+      ) : null}
+      <span className="min-w-0 truncate text-sm font-semibold">{title}</span>
+      <Badge variant="secondary" className="shrink-0">
+        {entries.length}
+      </Badge>
+    </div>
+  );
+
+  return (
+    <section className="overflow-hidden rounded-md border bg-background">
+      {collapsible ? (
+        <button
+          type="button"
+          className="flex h-11 w-full items-center justify-between px-3 text-left hover:bg-muted/50"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
+          {header}
+        </button>
+      ) : (
+        <div className="flex h-11 items-center px-3">{header}</div>
+      )}
+      {open ? (
+        <div className="space-y-2 border-t bg-muted/20 p-3">
+          {entries.map((entry) => (
+            <AddressRow key={entry.id} entry={entry} />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function AddressRow({ entry }: { entry: AddressEntry }) {
+  return (
+    <div className="flex min-w-0 items-start gap-2 rounded-md border bg-background p-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="min-w-0 truncate text-sm font-medium">{entry.label}</span>
+          {entry.description ? (
+            <Badge variant="secondary" className="shrink-0">
+              {entry.description}
+            </Badge>
+          ) : null}
+          {entry.port ? (
+            <span className="shrink-0 font-mono text-xs text-muted-foreground">:{entry.port}</span>
+          ) : null}
+        </div>
+        <div className="mt-2 break-all rounded-sm bg-muted px-2 py-1.5 font-mono text-xs text-muted-foreground">
+          {entry.url}
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="h-8 w-8 shrink-0"
+        onClick={() => void copyAddress(entry.url)}
+        title="复制"
+      >
+        <Copy className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
+function AddressLoadingState() {
+  return (
+    <div className="space-y-3">
+      {[0, 1, 2].map((item) => (
+        <div key={item} className="h-20 animate-pulse rounded-md border bg-muted/50" />
+      ))}
+    </div>
+  );
+}
+
+async function copyAddress(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else if (!fallbackCopy(value)) {
+      throw new Error("clipboard unavailable");
+    }
+    toast.success("已复制");
+  } catch {
+    toast.error("复制失败");
+  }
+}
+
+function fallbackCopy(value: string) {
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+  return ok;
 }
 
 function DashboardView({
@@ -2330,6 +2614,13 @@ function SettingsView({
                 onChange={(event) => patch("management", { password: event.target.value })}
               />
             </Field>
+            <Field label="健康检查间隔">
+              <Input
+                value={form.management.health_check_interval}
+                onChange={(event) => patch("management", { health_check_interval: event.target.value })}
+                placeholder="5m"
+              />
+            </Field>
           </div>
         </Section>
 
@@ -2372,6 +2663,32 @@ function SettingsView({
                 onChange={(event) => patch("geoip", { auto_update_interval: event.target.value })}
               />
             </Field>
+            <Field label="出口 IP 探测">
+              <Select
+                value={form.geoip.exit_ip_probe_mode}
+                onValueChange={(exit_ip_probe_mode) => patch("geoip", { exit_ip_probe_mode })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {EXIT_IP_PROBE_MODE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            {form.geoip.exit_ip_probe_mode === "interval" ? (
+              <Field label="出口探测间隔">
+                <Input
+                  value={form.geoip.exit_ip_probe_interval}
+                  onChange={(event) => patch("geoip", { exit_ip_probe_interval: event.target.value })}
+                  placeholder="5m"
+                />
+              </Field>
+            ) : null}
             <Field label="下载代理" className="md:col-span-2">
               <Textarea
                 value={form.geoip.download_proxies}
@@ -2952,7 +3269,8 @@ function normalizeCoreForm(
     },
     management: {
       listen: settings.management?.listen || "",
-      password: settings.management?.password || ""
+      password: settings.management?.password || "",
+      health_check_interval: settings.management?.health_check_interval || "5m"
     },
     log: {
       output: settings.log?.output || "stdout",
@@ -2968,6 +3286,8 @@ function normalizeCoreForm(
       port: settings.geoip?.port ? String(settings.geoip.port) : "",
       auto_update_enabled: Boolean(settings.geoip?.auto_update_enabled),
       auto_update_interval: settings.geoip?.auto_update_interval || "24h",
+      exit_ip_probe_mode: normalizeExitIPProbeMode(settings.geoip?.exit_ip_probe_mode),
+      exit_ip_probe_interval: settings.geoip?.exit_ip_probe_interval || "5m",
       download_proxies: (settings.geoip?.download_proxies || []).join("\n")
     },
     subscription: {
@@ -3003,7 +3323,8 @@ function buildCorePayload(form: CoreSettingsForm) {
     },
     management: {
       listen: form.management.listen,
-      password: form.management.password
+      password: form.management.password,
+      health_check_interval: form.management.health_check_interval || "5m"
     },
     log: {
       output: form.log.output,
@@ -3019,6 +3340,8 @@ function buildCorePayload(form: CoreSettingsForm) {
       port: Number(form.geoip.port) || 0,
       auto_update_enabled: form.geoip.auto_update_enabled,
       auto_update_interval: form.geoip.auto_update_interval || "24h",
+      exit_ip_probe_mode: normalizeExitIPProbeMode(form.geoip.exit_ip_probe_mode),
+      exit_ip_probe_interval: form.geoip.exit_ip_probe_interval || "5m",
       download_proxies: splitLines(form.geoip.download_proxies)
     }
   };
@@ -3076,6 +3399,10 @@ function normalizeInterval(interval: string) {
   if (!interval) return "1h";
   const options = ["5m", "15m", "30m", "1h", "6h", "12h", "24h"];
   return options.find((option) => interval === option || interval.startsWith(option)) || "1h";
+}
+
+function normalizeExitIPProbeMode(mode?: string) {
+  return mode === "subscription_refresh" ? "subscription_refresh" : "interval";
 }
 
 function useFlagRegionVisuals(themeMode: ThemeMode): RegionVisuals {

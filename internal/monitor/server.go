@@ -13,10 +13,12 @@ import (
 	"fmt"
 	"log"
 	mathrand "math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -270,6 +272,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/nodes/probe-all", s.withAuth(s.handleProbeAll))
 	mux.HandleFunc("/api/nodes/", s.withAuth(s.handleNodeAction))
 	mux.HandleFunc("/api/debug", s.withAuth(s.handleDebug))
+	mux.HandleFunc("/api/addresses", s.withAuth(s.handleAddresses))
 	mux.HandleFunc("/api/export", s.withAuth(s.handleExport))
 	mux.HandleFunc("/api/subscription/status", s.withAuth(s.handleSubscriptionStatus))
 	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
@@ -334,6 +337,7 @@ func (s *Server) SetConfig(cfg *config.Config) {
 		s.cfg.ProbeTarget = cfg.Management.ProbeTarget
 		s.cfg.HealthCheckInterval = cfg.Management.HealthCheckInterval
 		s.cfg.SkipCertVerify = cfg.SkipCertVerify
+		s.cfg.ExitIPProbeMode = cfg.GeoIP.ExitIPProbeMode
 		s.cfg.ExitIPProbeInterval = cfg.GeoIP.ExitIPProbeInterval
 		// Sync proxy credentials based on mode
 		if cfg.Mode == "multi-port" || cfg.Mode == "hybrid" {
@@ -481,6 +485,221 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 		"total_success": totalSuccess,
 		"success_rate":  successRate,
 	})
+}
+
+type addressEntry struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Protocol    string `json:"protocol"`
+	URL         string `json:"url"`
+	Port        uint16 `json:"port,omitempty"`
+	Region      string `json:"region,omitempty"`
+	NodeTag     string `json:"node_tag,omitempty"`
+	NodeName    string `json:"node_name,omitempty"`
+}
+
+type addressesResponse struct {
+	Mode    string         `json:"mode"`
+	Entries []addressEntry `json:"entries"`
+}
+
+// handleAddresses returns structured proxy entry points for the WebUI.
+func (s *Server) handleAddresses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.cfgMu.RLock()
+	mode := ""
+	externalIP := s.cfg.ExternalIP
+	var listenerCfg config.ListenerConfig
+	var multiPortCfg config.MultiPortConfig
+	var geoIPCfg config.GeoIPConfig
+	if s.cfgSrc != nil {
+		mode = s.cfgSrc.Mode
+		externalIP = s.cfgSrc.ExternalIP
+		listenerCfg = s.cfgSrc.Listener
+		multiPortCfg = s.cfgSrc.MultiPort
+		geoIPCfg = s.cfgSrc.GeoIP
+	}
+	s.cfgMu.RUnlock()
+
+	requestHost := requestHostname(r.Host)
+	entries := make([]addressEntry, 0)
+	showPoolEntry := mode == "pool" || mode == "hybrid"
+	showMultiPort := mode == "multi-port" || mode == "hybrid"
+
+	if showPoolEntry && listenerCfg.Port > 0 {
+		host := publicProxyHost(listenerCfg.Address, externalIP, requestHost)
+		entries = append(entries,
+			addressEntry{
+				ID:          "pool-http",
+				Kind:        "pool",
+				Label:       "Pool 代理池",
+				Description: "单端口入口",
+				Protocol:    "http",
+				URL:         proxyURL("http", listenerCfg.Username, listenerCfg.Password, host, listenerCfg.Port, ""),
+				Port:        listenerCfg.Port,
+			},
+			addressEntry{
+				ID:          "pool-socks5",
+				Kind:        "pool",
+				Label:       "Pool 代理池",
+				Description: "单端口入口",
+				Protocol:    "socks5",
+				URL:         proxyURL("socks5", listenerCfg.Username, listenerCfg.Password, host, listenerCfg.Port, ""),
+				Port:        listenerCfg.Port,
+			},
+		)
+	}
+
+	if geoIPCfg.Enabled {
+		geoIPPort := effectiveGeoIPPort(geoIPCfg.Port, listenerCfg.Port)
+		if geoIPPort > 0 {
+			geoIPListen := geoIPCfg.Listen
+			if geoIPListen == "" {
+				geoIPListen = listenerCfg.Address
+			}
+			host := publicProxyHost(geoIPListen, externalIP, requestHost)
+			entries = append(entries, addressEntry{
+				ID:          "geoip-all-http",
+				Kind:        "geoip",
+				Label:       "GeoIP 全局",
+				Description: "地域路由入口",
+				Protocol:    "http",
+				URL:         proxyURL("http", listenerCfg.Username, listenerCfg.Password, host, geoIPPort, ""),
+				Port:        geoIPPort,
+				Region:      "all",
+			})
+			for _, region := range geoip.AllRegions() {
+				regionPath := "/" + region + "/"
+				entries = append(entries, addressEntry{
+					ID:          fmt.Sprintf("geoip-%s-http", region),
+					Kind:        "geoip",
+					Label:       fmt.Sprintf("GeoIP %s", strings.ToUpper(region)),
+					Description: "地域路由入口",
+					Protocol:    "http",
+					URL:         proxyURL("http", listenerCfg.Username, listenerCfg.Password, host, geoIPPort, regionPath),
+					Port:        geoIPPort,
+					Region:      region,
+				})
+			}
+		}
+	}
+
+	if showMultiPort {
+		for _, snap := range s.mgr.Snapshot() {
+			if snap.ListenAddress == "" || snap.Port == 0 {
+				continue
+			}
+			host := publicProxyHost(snap.ListenAddress, externalIP, requestHost)
+			label := snap.Name
+			if label == "" {
+				label = snap.Tag
+			}
+			entries = append(entries,
+				addressEntry{
+					ID:          fmt.Sprintf("multi-%s-http", snap.Tag),
+					Kind:        "multi-port",
+					Label:       label,
+					Description: "独立端口",
+					Protocol:    "http",
+					URL:         proxyURL("http", multiPortCfg.Username, multiPortCfg.Password, host, snap.Port, ""),
+					Port:        snap.Port,
+					NodeTag:     snap.Tag,
+					NodeName:    snap.Name,
+				},
+				addressEntry{
+					ID:          fmt.Sprintf("multi-%s-socks5", snap.Tag),
+					Kind:        "multi-port",
+					Label:       label,
+					Description: "独立端口",
+					Protocol:    "socks5",
+					URL:         proxyURL("socks5", multiPortCfg.Username, multiPortCfg.Password, host, snap.Port, ""),
+					Port:        snap.Port,
+					NodeTag:     snap.Tag,
+					NodeName:    snap.Name,
+				},
+			)
+		}
+	}
+
+	writeJSON(w, addressesResponse{
+		Mode:    mode,
+		Entries: entries,
+	})
+}
+
+func requestHostname(hostport string) string {
+	hostport = strings.TrimSpace(hostport)
+	if hostport == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		return strings.Trim(host, "[]")
+	}
+	if strings.HasPrefix(hostport, "[") {
+		if end := strings.LastIndex(hostport, "]"); end > 0 {
+			return strings.Trim(hostport[1:end], "[]")
+		}
+	}
+	if strings.Count(hostport, ":") == 1 {
+		host, _, _ := strings.Cut(hostport, ":")
+		return strings.Trim(host, "[]")
+	}
+	return strings.Trim(hostport, "[]")
+}
+
+func publicProxyHost(listenAddress, externalIP, requestHost string) string {
+	host := requestHostname(listenAddress)
+	switch host {
+	case "", "0.0.0.0", "::":
+		if externalIP != "" {
+			return requestHostname(externalIP)
+		}
+		if requestHost != "" {
+			return requestHost
+		}
+		return "127.0.0.1"
+	default:
+		return host
+	}
+}
+
+func proxyURL(scheme, username, password, host string, port uint16, urlPath string) string {
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	u := url.URL{
+		Scheme: scheme,
+		Host:   net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(int(port))),
+		Path:   urlPath,
+	}
+	if username != "" {
+		if password != "" {
+			u.User = url.UserPassword(username, password)
+		} else {
+			u.User = url.User(username)
+		}
+	}
+	return u.String()
+}
+
+func effectiveGeoIPPort(configuredPort, listenerPort uint16) uint16 {
+	geoIPPort := configuredPort
+	if geoIPPort == 0 {
+		geoIPPort = 1221
+	}
+	if geoIPPort == listenerPort {
+		geoIPPort = 1221
+		if geoIPPort == listenerPort {
+			geoIPPort = listenerPort + 1
+		}
+	}
+	return geoIPPort
 }
 
 func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
@@ -973,6 +1192,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"port":                   0,
 				"auto_update_enabled":    false,
 				"auto_update_interval":   "",
+				"exit_ip_probe_mode":     config.ExitIPProbeModeInterval,
 				"exit_ip_probe_interval": "",
 				"download_proxies":       []string{},
 			},
@@ -1020,6 +1240,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"port":                   cfg.GeoIP.Port,
 				"auto_update_enabled":    cfg.GeoIP.AutoUpdateEnabled,
 				"auto_update_interval":   cfg.GeoIP.AutoUpdateInterval.String(),
+				"exit_ip_probe_mode":     cfg.GeoIP.ExitIPProbeMode,
 				"exit_ip_probe_interval": cfg.GeoIP.ExitIPProbeInterval.String(),
 				"download_proxies":       cfg.GeoIP.DownloadProxies,
 			}
@@ -1075,6 +1296,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				Port                uint16   `json:"port"`
 				AutoUpdateEnabled   bool     `json:"auto_update_enabled"`
 				AutoUpdateInterval  string   `json:"auto_update_interval"`
+				ExitIPProbeMode     string   `json:"exit_ip_probe_mode"`
 				ExitIPProbeInterval string   `json:"exit_ip_probe_interval"`
 				DownloadProxies     []string `json:"download_proxies"`
 			} `json:"geoip"`
@@ -1185,6 +1407,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 					nextCfg.GeoIP.AutoUpdateInterval = d
 				}
 			}
+			if req.GeoIP.ExitIPProbeMode != "" {
+				probeMode, ok := config.NormalizeExitIPProbeMode(req.GeoIP.ExitIPProbeMode)
+				if !ok {
+					s.cfgMu.Unlock()
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": "不支持的出口 IP 探测模式"})
+					return
+				}
+				nextCfg.GeoIP.ExitIPProbeMode = probeMode
+			}
 			if req.GeoIP.ExitIPProbeInterval != "" {
 				if d, err := time.ParseDuration(req.GeoIP.ExitIPProbeInterval); err == nil && d > 0 {
 					nextCfg.GeoIP.ExitIPProbeInterval = d
@@ -1241,8 +1473,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Password = nextCfg.Management.Password
 		s.cfg.Listen = nextCfg.Management.Listen
 		s.cfg.HealthCheckInterval = nextCfg.Management.HealthCheckInterval
+		s.cfg.ExitIPProbeMode = nextCfg.GeoIP.ExitIPProbeMode
 		s.cfg.ExitIPProbeInterval = nextCfg.GeoIP.ExitIPProbeInterval
 		if s.mgr != nil {
+			s.mgr.SetExitIPProbeMode(nextCfg.GeoIP.ExitIPProbeMode)
 			s.mgr.SetExitIPProbeInterval(nextCfg.GeoIP.ExitIPProbeInterval)
 		}
 		if nextCfg.Mode == "multi-port" || nextCfg.Mode == "hybrid" {

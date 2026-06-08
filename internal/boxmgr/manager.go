@@ -144,7 +144,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	// Start periodic health check after nodes are registered
 	m.mu.Lock()
 	if m.monitorMgr != nil && !m.healthCheckStarted {
-		m.monitorMgr.StartPeriodicHealthCheck(m.healthCheckInterval, periodicHealthTimeout)
+		m.monitorMgr.StartPeriodicHealthCheckWithInitialReason(m.healthCheckInterval, periodicHealthTimeout, monitor.ProbeReasonPeriodic)
 		m.healthCheckStarted = true
 	}
 	m.mu.Unlock()
@@ -174,6 +174,10 @@ func (m *Manager) Start(ctx context.Context) error {
 // Reload gracefully switches to a new configuration.
 // For multi-port mode, we must stop the old instance first to release ports.
 func (m *Manager) Reload(newCfg *config.Config) error {
+	return m.reload(newCfg, monitor.ProbeReasonPeriodic)
+}
+
+func (m *Manager) reload(newCfg *config.Config, initialProbeReason monitor.ProbeReason) error {
 	if newCfg == nil {
 		return errors.New("new config is nil")
 	}
@@ -265,7 +269,7 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 
 	// Trigger initial health check for newly registered nodes
 	if m.monitorMgr != nil {
-		m.monitorMgr.StartPeriodicHealthCheck(m.healthCheckInterval, periodicHealthTimeout)
+		m.monitorMgr.StartPeriodicHealthCheckWithInitialReason(m.healthCheckInterval, periodicHealthTimeout, initialProbeReason)
 	}
 
 	m.logger.Infof("reload completed successfully with %d nodes", len(newCfg.Nodes))
@@ -675,6 +679,7 @@ func (m *Manager) configureMonitorGeoIP(cfg *config.Config) {
 	if monitorMgr == nil {
 		return
 	}
+	monitorMgr.SetExitIPProbeMode(cfg.GeoIP.ExitIPProbeMode)
 	monitorMgr.SetExitIPProbeInterval(cfg.GeoIP.ExitIPProbeInterval)
 	if cfg.GeoIP.Enabled && cfg.GeoIP.DatabasePath == "" {
 		m.logger.Warnf("GeoIP enabled but database_path is empty (egress region detection disabled)")
@@ -693,6 +698,23 @@ func (m *Manager) configureMonitorGeoIP(cfg *config.Config) {
 	}
 	if cfg.GeoIP.Enabled && monitorMgr.GeoIPReady() {
 		m.logger.Infof("GeoIP egress region detection enabled")
+	}
+}
+
+// ProbeAllForSubscriptionRefresh triggers a health check tagged as subscription-triggered.
+func (m *Manager) ProbeAllForSubscriptionRefresh(timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = defaultHealthCheckTimeout
+	}
+	m.mu.RLock()
+	monitorMgr := m.monitorMgr
+	cfg := m.cfg
+	m.mu.RUnlock()
+	if cfg == nil || !cfg.GeoIP.Enabled || cfg.GeoIP.ExitIPProbeMode != config.ExitIPProbeModeSubscriptionRefresh {
+		return
+	}
+	if monitorMgr != nil {
+		monitorMgr.ProbeAllForSubscriptionRefresh(timeout)
 	}
 }
 
@@ -871,6 +893,15 @@ func (m *Manager) TriggerReload(ctx context.Context) error {
 
 // ReloadWithPortMap gracefully switches to a new configuration, preserving port assignments.
 func (m *Manager) ReloadWithPortMap(newCfg *config.Config, portMap map[string]uint16) error {
+	return m.reloadWithPortMap(newCfg, portMap, monitor.ProbeReasonPeriodic)
+}
+
+// ReloadWithPortMapForSubscriptionRefresh reloads and tags the post-reload probe as subscription-triggered.
+func (m *Manager) ReloadWithPortMapForSubscriptionRefresh(newCfg *config.Config, portMap map[string]uint16) error {
+	return m.reloadWithPortMap(newCfg, portMap, monitor.ProbeReasonSubscriptionRefresh)
+}
+
+func (m *Manager) reloadWithPortMap(newCfg *config.Config, portMap map[string]uint16, initialProbeReason monitor.ProbeReason) error {
 	if newCfg == nil {
 		return errors.New("new config is nil")
 	}
@@ -881,7 +912,7 @@ func (m *Manager) ReloadWithPortMap(newCfg *config.Config, portMap map[string]ui
 		return fmt.Errorf("normalize config with port map: %w", err)
 	}
 
-	return m.Reload(newCfg)
+	return m.reload(newCfg, initialProbeReason)
 }
 
 // CurrentPortMap returns the current port mapping from the active configuration.
@@ -892,6 +923,13 @@ func (m *Manager) CurrentPortMap() map[string]uint16 {
 		return nil
 	}
 	return m.cfg.BuildPortMap()
+}
+
+// CurrentConfigCopy returns a snapshot of the active configuration.
+func (m *Manager) CurrentConfigCopy() *config.Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.copyConfigLocked()
 }
 
 // --- Helper functions ---

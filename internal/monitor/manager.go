@@ -29,6 +29,7 @@ type Config struct {
 	ProxyPassword       string // 代理池的密码（用于导出）
 	ExternalIP          string // 外部 IP 地址，用于导出时替换 0.0.0.0
 	SkipCertVerify      bool   // 全局跳过 SSL 证书验证
+	ExitIPProbeMode     string
 	ExitIPProbeInterval time.Duration
 }
 
@@ -218,6 +219,10 @@ func (m *Manager) GeoIPReady() bool {
 // interval: how often to check (e.g., 30 * time.Second)
 // timeout: timeout for each probe (e.g., 10 * time.Second)
 func (m *Manager) StartPeriodicHealthCheck(interval, timeout time.Duration) {
+	m.StartPeriodicHealthCheckWithInitialReason(interval, timeout, ProbeReasonPeriodic)
+}
+
+func (m *Manager) StartPeriodicHealthCheckWithInitialReason(interval, timeout time.Duration, initialReason ProbeReason) {
 	if !m.probeReady {
 		if m.logger != nil {
 			m.logger.Warn("probe target not configured, periodic health check disabled")
@@ -238,7 +243,7 @@ func (m *Manager) StartPeriodicHealthCheck(interval, timeout time.Duration) {
 
 	go func() {
 		// 启动后立即进行一次检查
-		m.probeAllNodesWithContext(healthCtx, timeout)
+		m.probeAllNodesWithContext(healthCtx, timeout, initialReason)
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -248,7 +253,7 @@ func (m *Manager) StartPeriodicHealthCheck(interval, timeout time.Duration) {
 			case <-healthCtx.Done():
 				return
 			case <-ticker.C:
-				m.probeAllNodesWithContext(healthCtx, timeout)
+				m.probeAllNodesWithContext(healthCtx, timeout, ProbeReasonPeriodic)
 			}
 		}
 	}()
@@ -260,15 +265,20 @@ func (m *Manager) StartPeriodicHealthCheck(interval, timeout time.Duration) {
 
 // ProbeAllNow triggers a one-time health check on all nodes (e.g. after reload).
 func (m *Manager) ProbeAllNow(timeout time.Duration) {
-	m.probeAllNodes(timeout)
+	m.probeAllNodes(timeout, "")
+}
+
+// ProbeAllForSubscriptionRefresh runs a one-time health check tagged as subscription-triggered.
+func (m *Manager) ProbeAllForSubscriptionRefresh(timeout time.Duration) {
+	m.probeAllNodes(timeout, ProbeReasonSubscriptionRefresh)
 }
 
 // probeAllNodes checks all registered nodes concurrently.
-func (m *Manager) probeAllNodes(timeout time.Duration) {
-	m.probeAllNodesWithContext(m.ctx, timeout)
+func (m *Manager) probeAllNodes(timeout time.Duration, reason ProbeReason) {
+	m.probeAllNodesWithContext(m.ctx, timeout, reason)
 }
 
-func (m *Manager) probeAllNodesWithContext(parent context.Context, timeout time.Duration) {
+func (m *Manager) probeAllNodesWithContext(parent context.Context, timeout time.Duration, reason ProbeReason) {
 	m.mu.RLock()
 	entries := make([]*entry, 0, len(m.nodes))
 	for _, e := range m.nodes {
@@ -310,6 +320,7 @@ func (m *Manager) probeAllNodesWithContext(parent context.Context, timeout time.
 			defer func() { <-sem }()
 
 			ctx, cancel := context.WithTimeout(parent, timeout)
+			ctx = ContextWithProbeReason(ctx, reason)
 			latency, err := probe(ctx)
 			cancel()
 
@@ -370,6 +381,20 @@ func (m *Manager) SetExitIPProbeInterval(interval time.Duration) {
 	m.mu.Unlock()
 }
 
+func (m *Manager) SetExitIPProbeMode(mode string) {
+	mode = normalizeExitIPProbeMode(mode)
+	m.mu.Lock()
+	m.cfg.ExitIPProbeMode = mode
+	m.mu.Unlock()
+}
+
+func (m *Manager) ExitIPProbeMode() string {
+	m.mu.RLock()
+	mode := m.cfg.ExitIPProbeMode
+	m.mu.RUnlock()
+	return normalizeExitIPProbeMode(mode)
+}
+
 func (m *Manager) ExitIPProbeInterval() time.Duration {
 	m.mu.RLock()
 	interval := m.cfg.ExitIPProbeInterval
@@ -378,6 +403,26 @@ func (m *Manager) ExitIPProbeInterval() time.Duration {
 		return 5 * time.Minute
 	}
 	return interval
+}
+
+// ShouldUpdateExitIP reports whether this probe may update GeoIP egress data.
+// The boolean return pair is (shouldUpdate, throttleByInterval).
+func (m *Manager) ShouldUpdateExitIP(ctx context.Context) (bool, bool) {
+	switch m.ExitIPProbeMode() {
+	case "subscription_refresh":
+		return ProbeReasonFromContext(ctx) == ProbeReasonSubscriptionRefresh, false
+	default:
+		return true, true
+	}
+}
+
+func normalizeExitIPProbeMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "subscription", "subscription-refresh", "subscription_refresh":
+		return "subscription_refresh"
+	default:
+		return "interval"
+	}
 }
 
 func parsePort(value string) uint16 {

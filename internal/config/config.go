@@ -58,8 +58,26 @@ type GeoIPConfig struct {
 	Port                uint16        `yaml:"port"`                   // GeoIP 路由监听端口，默认 1221
 	AutoUpdateEnabled   bool          `yaml:"auto_update_enabled"`    // 是否启用自动更新数据库
 	AutoUpdateInterval  time.Duration `yaml:"auto_update_interval"`   // 自动更新间隔，默认 24 小时
+	ExitIPProbeMode     string        `yaml:"exit_ip_probe_mode"`     // 出口 IP 探测模式: interval / subscription_refresh
 	ExitIPProbeInterval time.Duration `yaml:"exit_ip_probe_interval"` // 出口 IP 探测最小间隔，默认 5 分钟
 	DownloadProxies     []string      `yaml:"download_proxies,omitempty"`
+}
+
+const (
+	ExitIPProbeModeInterval            = "interval"
+	ExitIPProbeModeSubscriptionRefresh = "subscription_refresh"
+)
+
+// NormalizeExitIPProbeMode returns the canonical exit-IP probing mode.
+func NormalizeExitIPProbeMode(mode string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "interval":
+		return ExitIPProbeModeInterval, true
+	case "subscription", "subscription-refresh", "subscription_refresh":
+		return ExitIPProbeModeSubscriptionRefresh, true
+	default:
+		return "", false
+	}
 }
 
 // UpdateConfig controls OTA update checks and release downloads.
@@ -316,6 +334,11 @@ func (c *Config) normalize() error {
 	}
 
 	c.GeoIP.DownloadProxies = cleanStringList(c.GeoIP.DownloadProxies)
+	if probeMode, ok := NormalizeExitIPProbeMode(c.GeoIP.ExitIPProbeMode); ok {
+		c.GeoIP.ExitIPProbeMode = probeMode
+	} else {
+		return fmt.Errorf("unsupported geoip.exit_ip_probe_mode %q (use 'interval' or 'subscription_refresh')", c.GeoIP.ExitIPProbeMode)
+	}
 	if c.GeoIP.ExitIPProbeInterval <= 0 {
 		c.GeoIP.ExitIPProbeInterval = c.Management.HealthCheckInterval
 	}
@@ -543,6 +566,11 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
 	}
 	c.GeoIP.DownloadProxies = cleanStringList(c.GeoIP.DownloadProxies)
+	if probeMode, ok := NormalizeExitIPProbeMode(c.GeoIP.ExitIPProbeMode); ok {
+		c.GeoIP.ExitIPProbeMode = probeMode
+	} else {
+		return fmt.Errorf("unsupported geoip.exit_ip_probe_mode %q (use 'interval' or 'subscription_refresh')", c.GeoIP.ExitIPProbeMode)
+	}
 	if c.GeoIP.ExitIPProbeInterval <= 0 {
 		c.GeoIP.ExitIPProbeInterval = c.Management.HealthCheckInterval
 	}
