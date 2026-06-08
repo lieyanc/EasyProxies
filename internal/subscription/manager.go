@@ -55,6 +55,8 @@ type Manager struct {
 	lastNodesModTime time.Time // Last known modification time of nodes.txt
 }
 
+const maxConcurrentSubscriptionFetches = 4
+
 // New creates a SubscriptionManager.
 func New(cfg *config.Config, boxMgr *boxmgr.Manager, opts ...Option) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -551,23 +553,59 @@ func (m *Manager) MarkNodesModified() {
 
 // fetchAllSubscriptions fetches nodes from all configured subscription URLs.
 func (m *Manager) fetchAllSubscriptions() ([]config.NodeConfig, error) {
-	var allNodes []config.NodeConfig
-	var lastErr error
-
+	m.mu.RLock()
+	refreshCtx := m.ctx
+	subURLs := append([]string(nil), m.baseCfg.Subscriptions...)
 	timeout := m.baseCfg.SubscriptionRefresh.Timeout
+	m.mu.RUnlock()
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
 
-	for _, subURL := range m.baseCfg.Subscriptions {
-		nodes, err := m.fetchSubscription(subURL, timeout)
-		if err != nil {
-			m.logger.Warnf("failed to fetch %s: %v", subURL, err)
-			lastErr = err
+	type fetchResult struct {
+		url   string
+		nodes []config.NodeConfig
+		err   error
+	}
+
+	limit := maxConcurrentSubscriptionFetches
+	if len(subURLs) < limit {
+		limit = len(subURLs)
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	results := make([]fetchResult, len(subURLs))
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i, subURL := range subURLs {
+		wg.Add(1)
+		go func(i int, subURL string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-refreshCtx.Done():
+				results[i] = fetchResult{url: subURL, err: refreshCtx.Err()}
+				return
+			}
+			nodes, err := m.fetchSubscription(refreshCtx, subURL, timeout)
+			results[i] = fetchResult{url: subURL, nodes: nodes, err: err}
+		}(i, subURL)
+	}
+	wg.Wait()
+
+	var allNodes []config.NodeConfig
+	var lastErr error
+	for _, result := range results {
+		if result.err != nil {
+			m.logger.Warnf("failed to fetch %s: %v", result.url, result.err)
+			lastErr = result.err
 			continue
 		}
-		m.logger.Infof("fetched %d nodes from subscription", len(nodes))
-		allNodes = append(allNodes, nodes...)
+		m.logger.Infof("fetched %d nodes from subscription", len(result.nodes))
+		allNodes = append(allNodes, result.nodes...)
 	}
 
 	if len(allNodes) == 0 && lastErr != nil {
@@ -578,8 +616,8 @@ func (m *Manager) fetchAllSubscriptions() ([]config.NodeConfig, error) {
 }
 
 // fetchSubscription fetches and parses a single subscription URL.
-func (m *Manager) fetchSubscription(subURL string, timeout time.Duration) ([]config.NodeConfig, error) {
-	ctx, cancel := context.WithTimeout(m.ctx, timeout)
+func (m *Manager) fetchSubscription(parent context.Context, subURL string, timeout time.Duration) ([]config.NodeConfig, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", subURL, nil)

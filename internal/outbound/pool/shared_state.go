@@ -16,11 +16,13 @@ type sharedMemberState struct {
 	blacklisted      bool
 	blacklistedUntil time.Time
 	lastExitIPProbe  time.Time
+	lastLatencyNanos atomic.Int64
 	entry            atomic.Pointer[monitor.EntryHandle]
 	active           atomic.Int32
 }
 
 var sharedStateStore sync.Map // map[tag]*sharedMemberState
+var latencyStateVersion atomic.Int64
 
 // acquireSharedState returns the shared state for a tag, creating if needed.
 func acquireSharedState(tag string) *sharedMemberState {
@@ -47,6 +49,7 @@ func ResetSharedStateStore() {
 		sharedStateStore.Delete(key)
 		return true
 	})
+	latencyStateVersion.Store(0)
 	ResetDialerRegistry()
 }
 
@@ -95,6 +98,28 @@ func (s *sharedMemberState) recordSuccess() {
 	if entry := s.entry.Load(); entry != nil {
 		entry.RecordSuccess()
 	}
+}
+
+func (s *sharedMemberState) recordLatency(latency time.Duration) {
+	if latency <= 0 {
+		return
+	}
+	s.lastLatencyNanos.Store(latency.Nanoseconds())
+	latencyStateVersion.Add(1)
+}
+
+func (s *sharedMemberState) clearLatency() {
+	if s.lastLatencyNanos.Swap(0) > 0 {
+		latencyStateVersion.Add(1)
+	}
+}
+
+func (s *sharedMemberState) lastLatency() time.Duration {
+	nanos := s.lastLatencyNanos.Load()
+	if nanos <= 0 {
+		return 0
+	}
+	return time.Duration(nanos)
 }
 
 // isBlacklisted checks if the node is currently blacklisted, auto-clearing if expired.

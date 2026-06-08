@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -92,6 +93,143 @@ type Server struct {
 	subRefresher SubscriptionRefresher
 	nodeMgr      NodeManager
 	updater      *updater.Updater
+	trafficHub   *trafficBroadcaster
+}
+
+const trafficAPIURL = "http://127.0.0.1:9092/traffic"
+
+type trafficBroadcaster struct {
+	mu         sync.Mutex
+	clients    map[chan string]struct{}
+	running    bool
+	generation int64
+	cancel     context.CancelFunc
+	client     *http.Client
+	logger     *log.Logger
+}
+
+func newTrafficBroadcaster(logger *log.Logger) *trafficBroadcaster {
+	if logger == nil {
+		logger = log.Default()
+	}
+	return &trafficBroadcaster{
+		clients: make(map[chan string]struct{}),
+		client:  &http.Client{},
+		logger:  logger,
+	}
+}
+
+func (b *trafficBroadcaster) subscribe() chan string {
+	ch := make(chan string, 16)
+	b.mu.Lock()
+	b.clients[ch] = struct{}{}
+	if !b.running {
+		b.startLocked()
+	}
+	b.mu.Unlock()
+	return ch
+}
+
+func (b *trafficBroadcaster) unsubscribe(ch chan string) {
+	b.mu.Lock()
+	if _, ok := b.clients[ch]; ok {
+		delete(b.clients, ch)
+		close(ch)
+	}
+	if len(b.clients) == 0 && b.cancel != nil {
+		b.cancel()
+		b.cancel = nil
+		b.running = false
+	}
+	b.mu.Unlock()
+}
+
+func (b *trafficBroadcaster) stop() {
+	b.mu.Lock()
+	if b.cancel != nil {
+		b.cancel()
+		b.cancel = nil
+	}
+	for ch := range b.clients {
+		delete(b.clients, ch)
+		close(ch)
+	}
+	b.running = false
+	b.mu.Unlock()
+}
+
+func (b *trafficBroadcaster) startLocked() {
+	ctx, cancel := context.WithCancel(context.Background())
+	b.generation++
+	generation := b.generation
+	b.cancel = cancel
+	b.running = true
+	go b.run(ctx, generation)
+}
+
+func (b *trafficBroadcaster) run(ctx context.Context, generation int64) {
+	defer func() {
+		b.mu.Lock()
+		if b.generation == generation {
+			b.running = false
+			b.cancel = nil
+		}
+		b.mu.Unlock()
+	}()
+
+	for {
+		if err := b.streamOnce(ctx); err != nil && ctx.Err() == nil && b.logger != nil {
+			b.logger.Printf("traffic stream disconnected: %v", err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+func (b *trafficBroadcaster) streamOnce(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, trafficAPIURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("traffic api status %s", resp.Status)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		b.broadcast(line)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return errors.New("traffic stream closed")
+}
+
+func (b *trafficBroadcaster) broadcast(line string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for ch := range b.clients {
+		select {
+		case ch <- line:
+		default:
+		}
+	}
 }
 
 // NewServer constructs a server; it can be nil when disabled.
@@ -116,6 +254,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 		sessions:   make(map[string]*Session),
 		sessionTTL: 24 * time.Hour,
 		probeSem:   semaphore.NewWeighted(maxConcurrentProbes),
+		trafficHub: newTrafficBroadcaster(logger),
 	}
 
 	// Start session cleanup goroutine
@@ -243,6 +382,9 @@ func (s *Server) Start(ctx context.Context) {
 func (s *Server) Shutdown(ctx context.Context) {
 	if s == nil || s.srv == nil {
 		return
+	}
+	if s.trafficHub != nil {
+		s.trafficHub.stop()
 	}
 	_ = s.srv.Shutdown(ctx)
 }
@@ -1508,14 +1650,10 @@ func (s *Server) respondNodeError(w http.ResponseWriter, err error) {
 // handleTraffic streams real-time traffic from sing-box Clash API as SSE.
 // Clash API /traffic returns newline-delimited JSON; we convert to SSE for browser EventSource.
 func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
-	// Connect to sing-box Clash API
-	resp, err := http.Get("http://127.0.0.1:9092/traffic")
-	if err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		writeJSON(w, map[string]any{"error": "无法连接到流量统计接口", "details": err.Error()})
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	defer resp.Body.Close()
 
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -1528,29 +1666,19 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read NDJSON lines from Clash API and forward as SSE
-	buf := make([]byte, 4096)
+	ch := s.trafficHub.subscribe()
+	defer s.trafficHub.unsubscribe(ch)
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		default:
-		}
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			// Each chunk may contain one or more JSON lines; forward as-is in SSE data frames
-			lines := strings.Split(strings.TrimSpace(string(buf[:n])), "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				fmt.Fprintf(w, "data: %s\n\n", line)
+		case line, ok := <-ch:
+			if !ok {
+				return
 			}
+			fmt.Fprintf(w, "data: %s\n\n", line)
 			flusher.Flush()
-		}
-		if readErr != nil {
-			return
 		}
 	}
 }

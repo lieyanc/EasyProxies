@@ -112,6 +112,14 @@ type poolOutbound struct {
 	rngMu          sync.Mutex // protects rng for random mode
 	monitor        *monitor.Manager
 	candidatesPool sync.Pool
+	latencyBest    atomic.Pointer[latencyCacheEntry]
+}
+
+type latencyCacheEntry struct {
+	member    *memberState
+	latency   time.Duration
+	updatedAt time.Time
+	version   int64
 }
 
 func newPool(ctx context.Context, _ adapter.Router, logger singlog.ContextLogger, tag string, options Options) (adapter.Outbound, error) {
@@ -361,6 +369,7 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 			if res.member.entry != nil {
 				res.member.entry.MarkInitialCheckDone(false)
 			}
+			p.clearLatencyMeasurement(res.member)
 		} else {
 			latencyMs := res.latency.Milliseconds()
 			p.logger.Info("initial probe success for ", res.member.tag, ", latency: ", latencyMs, "ms")
@@ -369,6 +378,7 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 				res.member.entry.RecordSuccessWithLatency(res.latency)
 				res.member.entry.MarkInitialCheckDone(true)
 			}
+			p.updateLatencyMeasurement(res.member, res.latency)
 		}
 	}
 
@@ -663,28 +673,10 @@ func (p *poolOutbound) selectMemberWithMode(candidates []*memberState, modeOverr
 		}
 		return selected
 	case modeLatency:
-		// Pick the candidate with the lowest measured latency.
-		// Candidates without a latency reading (never probed) are deprioritized;
-		// if all are unmeasured, fall back to round-robin.
-		var selected *memberState
-		var minLatency time.Duration
-		hasMeasured := false
-		for _, member := range candidates {
-			entry := member.entryHandle()
-			if entry == nil {
-				continue
-			}
-			latency := entry.LastLatency()
-			if latency <= 0 {
-				continue
-			}
-			if !hasMeasured || latency < minLatency {
-				selected = member
-				minLatency = latency
-				hasMeasured = true
-			}
+		if cached := p.cachedLatencyMember(candidates); cached != nil {
+			return cached
 		}
-		if selected != nil {
+		if selected := p.lowestLatencyMember(candidates); selected != nil {
 			return selected
 		}
 		// Fallback: no measurements yet — round-robin.
@@ -703,6 +695,7 @@ func (p *poolOutbound) recordFailure(member *memberState, cause error) {
 	}
 	failures, blacklisted, _ := member.shared.recordFailure(cause, p.options.FailureThreshold, p.options.BlacklistDuration)
 	if blacklisted {
+		p.clearLatencyMeasurement(member)
 		p.logger.Warn("proxy ", member.tag, " blacklisted for ", p.options.BlacklistDuration, ": ", cause)
 		log.Printf("[pool] %s blacklisted for %s: %v", member.tag, p.options.BlacklistDuration, cause)
 	} else {
@@ -715,6 +708,117 @@ func (p *poolOutbound) recordSuccess(member *memberState) {
 	if member.shared != nil {
 		member.shared.recordSuccess()
 	}
+}
+
+func (p *poolOutbound) cachedLatencyMember(candidates []*memberState) *memberState {
+	cached := p.latencyBest.Load()
+	if cached == nil || cached.member == nil || cached.latency <= 0 {
+		return nil
+	}
+	if cached.version != latencyStateVersion.Load() {
+		return nil
+	}
+	for _, member := range candidates {
+		if member == cached.member {
+			return member
+		}
+	}
+	return nil
+}
+
+func (p *poolOutbound) lowestLatencyMember(candidates []*memberState) *memberState {
+	version := latencyStateVersion.Load()
+	var selected *memberState
+	var minLatency time.Duration
+	for _, member := range candidates {
+		latency := p.lastMeasuredLatency(member)
+		if latency <= 0 {
+			continue
+		}
+		if selected == nil || latency < minLatency {
+			selected = member
+			minLatency = latency
+		}
+	}
+	if selected != nil {
+		p.storeLatencyBest(selected, minLatency, time.Now(), version)
+	}
+	return selected
+}
+
+func (p *poolOutbound) updateLatencyMeasurement(member *memberState, latency time.Duration) {
+	if member == nil || latency <= 0 {
+		return
+	}
+	if member.shared != nil {
+		member.shared.recordLatency(latency)
+	}
+	p.rebuildLatencyCache()
+}
+
+func (p *poolOutbound) clearLatencyMeasurement(member *memberState) {
+	if member != nil && member.shared != nil {
+		member.shared.clearLatency()
+	}
+	p.rebuildLatencyCache()
+}
+
+func (p *poolOutbound) rebuildLatencyCache() {
+	now := time.Now()
+	version := latencyStateVersion.Load()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	var selected *memberState
+	var minLatency time.Duration
+	for _, member := range p.members {
+		if !p.matchesRegionFilter(member) {
+			continue
+		}
+		if member.shared != nil && member.shared.isBlacklisted(now) {
+			continue
+		}
+		latency := p.lastMeasuredLatency(member)
+		if latency <= 0 {
+			continue
+		}
+		if selected == nil || latency < minLatency {
+			selected = member
+			minLatency = latency
+		}
+	}
+	if selected == nil {
+		p.latencyBest.Store(nil)
+		return
+	}
+	p.storeLatencyBest(selected, minLatency, now, version)
+}
+
+func (p *poolOutbound) storeLatencyBest(member *memberState, latency time.Duration, updatedAt time.Time, version int64) {
+	if version != latencyStateVersion.Load() {
+		return
+	}
+	p.latencyBest.Store(&latencyCacheEntry{
+		member:    member,
+		latency:   latency,
+		updatedAt: updatedAt,
+		version:   version,
+	})
+}
+
+func (p *poolOutbound) lastMeasuredLatency(member *memberState) time.Duration {
+	if member == nil {
+		return 0
+	}
+	if member.shared != nil {
+		if latency := member.shared.lastLatency(); latency > 0 {
+			return latency
+		}
+	}
+	if entry := member.entryHandle(); entry != nil {
+		return entry.LastLatency()
+	}
+	return 0
 }
 
 func (p *poolOutbound) wrapConn(conn net.Conn, member *memberState) net.Conn {
@@ -850,6 +954,7 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 			if member.entry != nil {
 				member.entry.RecordFailure(err)
 			}
+			p.clearLatencyMeasurement(member)
 			return 0, err
 		}
 		defer conn.Close()
@@ -860,6 +965,7 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 			if member.entry != nil {
 				member.entry.RecordFailure(err)
 			}
+			p.clearLatencyMeasurement(member)
 			return 0, err
 		}
 
@@ -868,13 +974,14 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 		if member.entry != nil {
 			member.entry.RecordSuccessWithLatency(duration)
 		}
-		p.updateExitIP(ctx, member)
 		// Clear pool blacklist on successful probe — a node that passes
 		// health check should be available for selection immediately,
 		// not remain blacklisted for the full duration (fixes #8, #9).
 		if member.shared != nil {
 			member.shared.forceRelease()
 		}
+		p.updateLatencyMeasurement(member, duration)
+		p.updateExitIP(ctx, member)
 		return duration, nil
 	}
 }
@@ -918,6 +1025,7 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 			if member.entry != nil {
 				member.entry.RecordFailure(err)
 			}
+			p.clearLatencyMeasurement(member)
 			return 0, err
 		}
 		defer conn.Close()
@@ -928,6 +1036,7 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 			if member.entry != nil {
 				member.entry.RecordFailure(err)
 			}
+			p.clearLatencyMeasurement(member)
 			return 0, err
 		}
 
@@ -936,11 +1045,12 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 		if member.entry != nil {
 			member.entry.RecordSuccessWithLatency(duration)
 		}
-		p.updateExitIP(ctx, member)
 		// Clear pool blacklist on successful probe (fixes #8, #9)
 		if member.shared != nil {
 			member.shared.forceRelease()
 		}
+		p.updateLatencyMeasurement(member, duration)
+		p.updateExitIP(ctx, member)
 		return duration, nil
 	}
 }

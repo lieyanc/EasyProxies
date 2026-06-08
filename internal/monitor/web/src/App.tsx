@@ -409,7 +409,6 @@ function App() {
         setAuthenticated(true);
         setLoginOpen(false);
         void loadSubscriptionStatus();
-        void loadDebugData(true);
       } catch (error) {
         if (!silent) {
           handleApiError(error, "节点数据读取失败");
@@ -419,7 +418,7 @@ function App() {
         }
       }
     },
-    [handleApiError, loadDebugData, loadSubscriptionStatus]
+    [handleApiError, loadSubscriptionStatus]
   );
 
   useEffect(() => {
@@ -996,7 +995,6 @@ function App() {
                   nodes={filteredNodes}
                   allNodes={nodes}
                   stats={stats}
-                  debugData={debugData}
                   currentRegion={currentRegion}
                   onRegionChange={setCurrentRegion}
                   traffic={traffic}
@@ -1242,7 +1240,6 @@ function DashboardView({
   nodes,
   allNodes,
   stats,
-  debugData,
   currentRegion,
   onRegionChange,
   traffic,
@@ -1262,7 +1259,6 @@ function DashboardView({
     up: number;
     down: number;
   };
-  debugData: DebugResponse;
   currentRegion: string;
   onRegionChange: (region: string) => void;
   traffic: TrafficPoint[];
@@ -1418,10 +1414,10 @@ function DashboardView({
   }, [themeMode, traffic]);
 
   const requestSummary = useMemo(() => {
-    const totalCalls = debugData.total_calls || 0;
-    const totalSuccess = debugData.total_success || 0;
-    const totalFailure = Math.max(totalCalls - totalSuccess, 0);
-    const topNodes = [...debugData.nodes]
+    const totalSuccess = allNodes.reduce((sum, node) => sum + (node.success_count || 0), 0);
+    const totalFailure = allNodes.reduce((sum, node) => sum + (node.failure_count || 0), 0);
+    const totalCalls = totalSuccess + totalFailure;
+    const topNodes = [...allNodes]
       .map((node) => {
         const success = node.success_count || 0;
         const failure = node.failure_count || 0;
@@ -1438,10 +1434,10 @@ function DashboardView({
       totalCalls,
       totalSuccess,
       totalFailure,
-      successRate: debugData.success_rate || 0,
+      successRate: totalCalls ? (totalSuccess / totalCalls) * 100 : 0,
       topNodes
     };
-  }, [debugData]);
+  }, [allNodes]);
 
   return (
     <div className="space-y-6">
@@ -1454,7 +1450,7 @@ function DashboardView({
           successRate={requestSummary.successRate}
           topNodes={requestSummary.topNodes}
         />
-        <SpeedOverviewCard up={stats.up} down={stats.down} />
+        <SpeedOverviewCard up={stats.up} down={stats.down} active={stats.active} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
@@ -1568,14 +1564,12 @@ function NodeOverviewCard({
   stats: {
     total: number;
     healthy: number;
-    active: number;
     blocked: number;
-    up: number;
-    down: number;
   };
   subscriptionStatus: SubscriptionStatus | null;
 }) {
   const healthRate = stats.total ? (stats.healthy / stats.total) * 100 : 0;
+  const pending = Math.max(stats.total - stats.healthy - stats.blocked, 0);
 
   return (
     <DashboardSummaryCard title="节点" icon={Network}>
@@ -1604,9 +1598,9 @@ function NodeOverviewCard({
       </div>
 
       <div className="grid grid-cols-3 gap-2">
-        <DashboardMiniStat label="活跃连接" value={formatCount(stats.active)} tone="primary" />
+        <DashboardMiniStat label="健康节点" value={formatCount(stats.healthy)} tone="success" />
         <DashboardMiniStat label="不可用" value={formatCount(stats.blocked)} tone="destructive" />
-        <DashboardMiniStat label="节点总数" value={formatCount(stats.total)} />
+        <DashboardMiniStat label="待检测" value={formatCount(pending)} />
       </div>
     </DashboardSummaryCard>
   );
@@ -1678,38 +1672,43 @@ function RequestOverviewCard({
   );
 }
 
-function SpeedOverviewCard({ up, down }: { up: number; down: number }) {
+function SpeedOverviewCard({ up, down, active }: { up: number; down: number; active: number }) {
   const total = up + down;
   const downShare = total > 0 ? (down / total) * 100 : 0;
   const upShare = total > 0 ? (up / total) * 100 : 0;
 
   return (
-    <DashboardSummaryCard title="实时速度" icon={Gauge}>
+    <DashboardSummaryCard title="实时指标" icon={Gauge}>
       <div className="grid grid-cols-2 gap-3">
         <div className="min-w-0 rounded-md border bg-muted/35 px-3 py-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Download className="h-3.5 w-3.5" />
-            下载
+            <Gauge className="h-3.5 w-3.5" />
+            总吞吐
           </div>
           <div className="mt-2 truncate font-mono text-2xl font-semibold text-success">
-            {formatBytes(down)}/s
+            {formatBytes(total)}/s
           </div>
         </div>
         <div className="min-w-0 rounded-md border bg-muted/35 px-3 py-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <UploadCloud className="h-3.5 w-3.5" />
-            上传
+            <Activity className="h-3.5 w-3.5" />
+            活跃连接
           </div>
           <div className="mt-2 truncate font-mono text-2xl font-semibold text-primary">
-            {formatBytes(up)}/s
+            {formatCount(active)}
           </div>
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-2">
+        <DashboardMiniStat label="下载速率" value={`${formatBytes(down)}/s`} tone="success" />
+        <DashboardMiniStat label="上传速率" value={`${formatBytes(up)}/s`} tone="primary" />
+      </div>
+
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>上下行占比</span>
-          <span className="font-mono text-foreground">{formatBytes(total)}/s</span>
+          <span>流量方向</span>
+          <span className="font-mono text-foreground">Down / Up</span>
         </div>
         <div className="flex h-2 overflow-hidden rounded-full bg-muted">
           <div className="h-full bg-success" style={{ width: `${downShare}%` }} />
@@ -1719,11 +1718,6 @@ function SpeedOverviewCard({ up, down }: { up: number; down: number }) {
           <span>Down {downShare.toFixed(0)}%</span>
           <span>Up {upShare.toFixed(0)}%</span>
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <DashboardMiniStat label="实时下载" value={`${formatBytes(down)}/s`} tone="success" />
-        <DashboardMiniStat label="实时上传" value={`${formatBytes(up)}/s`} tone="primary" />
       </div>
     </DashboardSummaryCard>
   );
