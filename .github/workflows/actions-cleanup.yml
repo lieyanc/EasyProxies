@@ -1,0 +1,51 @@
+name: Actions Cleanup
+
+on:
+  schedule:
+    - cron: "37 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep latest 3 completed runs per workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const keepRuns = 3;
+            const { owner, repo } = context.repo;
+
+            const workflows = await github.paginate(
+              github.rest.actions.listRepoWorkflows,
+              { owner, repo, per_page: 100 },
+            );
+
+            for (const workflow of workflows) {
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRuns,
+                {
+                  owner,
+                  repo,
+                  workflow_id: workflow.id,
+                  status: "completed",
+                  per_page: 100,
+                },
+              );
+
+              const oldRuns = runs
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                .slice(keepRuns);
+
+              for (const run of oldRuns) {
+                await github.rest.actions.deleteWorkflowRun({
+                  owner,
+                  repo,
+                  run_id: run.id,
+                });
+              }
+            }
