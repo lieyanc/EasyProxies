@@ -297,3 +297,34 @@ jobs:
             BUILD_TIME=${{ needs.meta.outputs.build_time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  cleanup-artifacts:
+    name: Clean Up Old Artifacts
+    needs:
+      - build-binaries
+      - release-dev
+      - release-stable
+    if: ${{ always() && !cancelled() && needs['build-binaries'].result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete artifacts from previous runs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner, repo, per_page: 100 },
+            );
+
+            for (const artifact of artifacts) {
+              if (artifact.workflow_run?.id === context.runId) continue;
+              await github.rest.actions.deleteArtifact({
+                owner,
+                repo,
+                artifact_id: artifact.id,
+              });
+            }
