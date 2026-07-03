@@ -3974,7 +3974,7 @@ function chartPalette(mode?: ThemeMode) {
 
 function cssVarColor(name: string, mode?: ThemeMode) {
   if (typeof window === "undefined") {
-    return "hsl(0 0% 50%)";
+    return "hsl(0, 0%, 50%)";
   }
   const dark = isDarkTheme(mode);
   const rootDark = document.documentElement.classList.contains("dark");
@@ -3983,22 +3983,35 @@ function cssVarColor(name: string, mode?: ThemeMode) {
   }
 
   const value = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  if (value) return `hsl(${value})`;
+  if (value) return hslVarToChartColor(value);
 
   return cssVarFallbackColor(name, dark);
 }
 
+function hslVarToChartColor(value: string) {
+  const [channels, alpha] = value.split("/");
+  const parts = channels.trim().split(/\s+/);
+  if (parts.length >= 3) {
+    const [hue, saturation, lightness] = parts;
+    const alphaValue = alpha?.trim();
+    return alphaValue
+      ? `hsla(${hue}, ${saturation}, ${lightness}, ${alphaValue})`
+      : `hsl(${hue}, ${saturation}, ${lightness})`;
+  }
+  return value;
+}
+
 function cssVarFallbackColor(name: string, dark: boolean) {
-  if (name === "--card") return dark ? "hsl(0 0% 3.9%)" : "hsl(0 0% 100%)";
-  if (name === "--foreground") return dark ? "hsl(210 40% 98%)" : "hsl(0 0% 3.9%)";
-  if (name === "--muted-foreground") return dark ? "hsl(0 0% 63.9%)" : "hsl(0 0% 45.1%)";
-  if (name === "--border") return dark ? "hsl(0 0% 14.9%)" : "hsl(0 0% 89.8%)";
-  if (name === "--chart-1") return dark ? "hsl(0 0% 98%)" : "hsl(0 0% 9%)";
-  if (name === "--chart-2") return dark ? "hsl(151 62% 44%)" : "hsl(151 62% 41%)";
-  if (name === "--chart-3") return dark ? "hsl(42 91% 54%)" : "hsl(42 91% 50%)";
-  if (name === "--chart-4") return dark ? "hsl(0 62.8% 50%)" : "hsl(0 84.2% 60.2%)";
-  if (name === "--chart-5") return dark ? "hsl(217 91% 60%)" : "hsl(221 83% 53%)";
-  return "hsl(0 0% 50%)";
+  if (name === "--card") return dark ? "hsl(0, 0%, 3.9%)" : "hsl(0, 0%, 100%)";
+  if (name === "--foreground") return dark ? "hsl(210, 40%, 98%)" : "hsl(0, 0%, 3.9%)";
+  if (name === "--muted-foreground") return dark ? "hsl(0, 0%, 63.9%)" : "hsl(0, 0%, 45.1%)";
+  if (name === "--border") return dark ? "hsl(0, 0%, 14.9%)" : "hsl(0, 0%, 89.8%)";
+  if (name === "--chart-1") return dark ? "hsl(0, 0%, 98%)" : "hsl(0, 0%, 9%)";
+  if (name === "--chart-2") return dark ? "hsl(151, 62%, 44%)" : "hsl(151, 62%, 41%)";
+  if (name === "--chart-3") return dark ? "hsl(42, 91%, 54%)" : "hsl(42, 91%, 50%)";
+  if (name === "--chart-4") return dark ? "hsl(0, 62.8%, 50%)" : "hsl(0, 84.2%, 60.2%)";
+  if (name === "--chart-5") return dark ? "hsl(217, 91%, 60%)" : "hsl(221, 83%, 53%)";
+  return "hsl(0, 0%, 50%)";
 }
 
 function chartTooltip(mode?: ThemeMode, trigger: "item" | "axis" = "item") {
