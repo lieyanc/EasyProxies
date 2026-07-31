@@ -113,6 +113,7 @@ type poolOutbound struct {
 	monitor        *monitor.Manager
 	candidatesPool sync.Pool
 	latencyBest    atomic.Pointer[latencyCacheEntry]
+	exitIPSem      chan struct{} // bounds background exit-IP probes
 }
 
 type latencyCacheEntry struct {
@@ -147,6 +148,7 @@ func newPool(ctx context.Context, _ adapter.Router, logger singlog.ContextLogger
 				return make([]*memberState, 0, memberCount)
 			},
 		},
+		exitIPSem: make(chan struct{}, 4),
 	}
 
 	// Register nodes immediately if monitor is available
@@ -305,6 +307,7 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 		p.mu.Unlock()
 		return
 	}
+	probePath := p.monitor.ProbePath()
 
 	p.logger.Info("starting initial health check for all nodes")
 
@@ -313,8 +316,50 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 	copy(members, p.members)
 	p.mu.Unlock()
 
-	// Concurrent probing with bounded workers
-	const maxWorkers = 20
+	// Concurrent probing with bounded workers (web-adjustable)
+	maxWorkers := p.monitor.InitialCheckConcurrency()
+	const initialProbeTimeout = 15 * time.Second
+	const slowProbeTimeout = 2 * initialProbeTimeout
+
+	probeMember := func(m *memberState, timeout time.Duration) (time.Duration, error) {
+		ctx, cancel := context.WithTimeout(p.ctx, timeout)
+		defer cancel()
+
+		start := time.Now()
+		conn, err := m.outbound.DialContext(ctx, N.NetworkTCP, destination)
+		if err != nil {
+			return 0, err
+		}
+		defer conn.Close()
+
+		if _, err := httpProbe(ctx, conn, destination.AddrString(), probePath); err != nil {
+			return 0, err
+		}
+
+		latency := time.Since(start)
+		p.scheduleExitIPProbe(ctx, m)
+		return latency, nil
+	}
+
+	markSuccess := func(m *memberState, latency time.Duration) {
+		if m.entry != nil {
+			m.entry.RecordSuccessWithLatency(latency)
+			m.entry.MarkInitialCheckDone(true)
+		}
+		p.updateLatencyMeasurement(m, latency)
+	}
+	markFailure := func(m *memberState, err error) {
+		if m.shared != nil {
+			m.shared.recordFailure(err, 1, p.options.BlacklistDuration)
+		} else if m.entry != nil {
+			m.entry.RecordFailure(err)
+		}
+		if m.entry != nil {
+			m.entry.MarkInitialCheckDone(false)
+		}
+		p.clearLatencyMeasurement(m)
+	}
+
 	type probeResult struct {
 		member  *memberState
 		success bool
@@ -330,58 +375,58 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 		go func(m *memberState) {
 			defer func() { <-sem }() // release worker slot
 
-			ctx, cancel := context.WithTimeout(p.ctx, 15*time.Second)
-			defer cancel()
-
-			start := time.Now()
-			conn, err := m.outbound.DialContext(ctx, N.NetworkTCP, destination)
+			latency, err := probeMember(m, initialProbeTimeout)
 			if err != nil {
 				results <- probeResult{member: m, err: err}
 				return
 			}
-
-			_, err = httpProbe(conn, destination.AddrString())
-			conn.Close()
-			if err != nil {
-				results <- probeResult{member: m, err: err}
-				return
-			}
-
-			latency := time.Since(start)
-			p.updateExitIP(ctx, m)
 			results <- probeResult{member: m, success: true, latency: latency}
 		}(member)
 	}
 
-	// Collect results
+	// Collect results; failures are not finalized yet — they get a serial
+	// slow retest after the concurrent sweep to avoid congestion false kills.
 	availableCount := 0
-	failedCount := 0
+	var retryQueue []*memberState
 	for i := 0; i < len(members); i++ {
 		res := <-results
 		if res.err != nil {
-			p.logger.Warn("initial probe failed for ", res.member.tag, ": ", res.err)
-			failedCount++
-			if res.member.shared != nil {
-				res.member.shared.recordFailure(res.err, 1, p.options.BlacklistDuration)
-			} else if res.member.entry != nil {
-				res.member.entry.RecordFailure(res.err)
-			}
-			if res.member.entry != nil {
-				res.member.entry.MarkInitialCheckDone(false)
-			}
-			p.clearLatencyMeasurement(res.member)
+			p.logger.Warn("initial probe failed for ", res.member.tag, ", queued for slow retest: ", res.err)
+			retryQueue = append(retryQueue, res.member)
 		} else {
 			latencyMs := res.latency.Milliseconds()
 			p.logger.Info("initial probe success for ", res.member.tag, ", latency: ", latencyMs, "ms")
 			availableCount++
-			if res.member.entry != nil {
-				res.member.entry.RecordSuccessWithLatency(res.latency)
-				res.member.entry.MarkInitialCheckDone(true)
-			}
-			p.updateLatencyMeasurement(res.member, res.latency)
+			markSuccess(res.member, res.latency)
 		}
 	}
 
+	// Serial slow retest queue: single worker, relaxed timeout.
+	failedCount := 0
+	rescuedCount := 0
+	if len(retryQueue) > 0 {
+		p.logger.Info("retesting ", len(retryQueue), " failed node(s) in slow queue")
+		for _, member := range retryQueue {
+			if p.ctx.Err() != nil {
+				return
+			}
+			latency, err := probeMember(member, slowProbeTimeout)
+			if err != nil {
+				p.logger.Warn("initial probe failed for ", member.tag, " after slow retest: ", err)
+				failedCount++
+				markFailure(member, err)
+				continue
+			}
+			p.logger.Info("slow retest success for ", member.tag, ", latency: ", latency.Milliseconds(), "ms")
+			availableCount++
+			rescuedCount++
+			markSuccess(member, latency)
+		}
+	}
+
+	if rescuedCount > 0 {
+		p.logger.Info("slow retest rescued ", rescuedCount, " node(s) from false negatives")
+	}
 	p.logger.Info("initial health check completed: ", availableCount, " available, ", failedCount, " failed")
 }
 
@@ -843,12 +888,21 @@ func (p *poolOutbound) makeReleaseFunc(member *memberState) func() {
 
 // httpProbe performs an HTTP probe through the connection and measures TTFB.
 // It sends a minimal HTTP request and waits for the first byte of response.
-func httpProbe(conn net.Conn, host string) (time.Duration, error) {
+// Deadlines follow the caller's context so slow-queue retests can use a
+// relaxed timeout.
+func httpProbe(ctx context.Context, conn net.Conn, host, path string) (time.Duration, error) {
+	if path == "" {
+		path = "/generate_204"
+	}
 	// Build HTTP request
-	req := fmt.Sprintf("GET /generate_204 HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n", host)
+	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n", path, host)
 
-	// Try to set write deadline (ignore errors for connections that don't support it)
-	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	deadline := time.Now().Add(10 * time.Second)
+	if d, ok := ctx.Deadline(); ok {
+		deadline = d
+	}
+	// Try to set deadline (ignore errors for connections that don't support it)
+	_ = conn.SetDeadline(deadline)
 
 	// Record time just before sending request
 	start := time.Now()
@@ -857,9 +911,6 @@ func httpProbe(conn net.Conn, host string) (time.Duration, error) {
 	if _, err := conn.Write([]byte(req)); err != nil {
 		return 0, fmt.Errorf("write request: %w", err)
 	}
-
-	// Try to set read deadline (ignore errors for connections that don't support it)
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
 	// Read first byte (TTFB - Time To First Byte)
 	reader := bufio.NewReader(conn)
@@ -900,6 +951,27 @@ func httpGetBody(conn net.Conn, host, path string, maxBody int64) (string, error
 		return "", fmt.Errorf("response body exceeds %d bytes", maxBody)
 	}
 	return string(body), nil
+}
+
+// scheduleExitIPProbe runs the exit-IP/GeoIP probe in the background so it
+// does not hold a health-check worker slot. Concurrency is bounded; when the
+// limiter is saturated the probe is skipped and retried on the next cycle.
+func (p *poolOutbound) scheduleExitIPProbe(ctx context.Context, member *memberState) {
+	if p.monitor == nil || !p.monitor.GeoIPReady() {
+		return
+	}
+	select {
+	case p.exitIPSem <- struct{}{}:
+	default:
+		return
+	}
+	reason := monitor.ProbeReasonFromContext(ctx)
+	go func() {
+		defer func() { <-p.exitIPSem }()
+		detached, cancel := context.WithTimeout(p.ctx, 8*time.Second)
+		defer cancel()
+		p.updateExitIP(monitor.ContextWithProbeReason(detached, reason), member)
+	}()
 }
 
 func (p *poolOutbound) updateExitIP(ctx context.Context, member *memberState) {
@@ -951,6 +1023,7 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 	if !ok {
 		return nil
 	}
+	probePath := p.monitor.ProbePath()
 	return func(ctx context.Context) (time.Duration, error) {
 		start := time.Now()
 		conn, err := member.outbound.DialContext(ctx, N.NetworkTCP, destination)
@@ -964,7 +1037,7 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 		defer conn.Close()
 
 		// Perform HTTP probe to measure actual latency (TTFB)
-		_, err = httpProbe(conn, destination.AddrString())
+		_, err = httpProbe(ctx, conn, destination.AddrString(), probePath)
 		if err != nil {
 			if member.entry != nil {
 				member.entry.RecordFailure(err)
@@ -985,7 +1058,7 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 			member.shared.forceRelease()
 		}
 		p.updateLatencyMeasurement(member, duration)
-		p.updateExitIP(ctx, member)
+		p.scheduleExitIPProbe(ctx, member)
 		return duration, nil
 	}
 }
@@ -999,6 +1072,7 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 	if !ok {
 		return nil
 	}
+	probePath := p.monitor.ProbePath()
 	return func(ctx context.Context) (time.Duration, error) {
 		// Ensure members are initialized
 		p.mu.Lock()
@@ -1035,7 +1109,7 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 		defer conn.Close()
 
 		// Perform HTTP probe to measure actual latency (TTFB)
-		_, err = httpProbe(conn, destination.AddrString())
+		_, err = httpProbe(ctx, conn, destination.AddrString(), probePath)
 		if err != nil {
 			if member.entry != nil {
 				member.entry.RecordFailure(err)
@@ -1054,7 +1128,7 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 			member.shared.forceRelease()
 		}
 		p.updateLatencyMeasurement(member, duration)
-		p.updateExitIP(ctx, member)
+		p.scheduleExitIPProbe(ctx, member)
 		return duration, nil
 	}
 }

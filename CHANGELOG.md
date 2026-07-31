@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Health Check Slow-Retest Queue**: Failed probes no longer mark a node down immediately
+  - Startup and periodic sweeps queue failed nodes for a serial (single-worker) retest with doubled timeout after the main sweep, eliminating false negatives from probe congestion
+  - New `management.initial_check_concurrency` option (default 20) makes the startup sweep concurrency adjustable from the WebUI
 - **Round-Robin Entry**: Optional username-selected round-robin entry on the pool listener
   - `pool.round_robin_entry: true` exposes `<listener.username>-rr` (or a custom `pool.round_robin_username`) on the same port
   - Always schedules round-robin regardless of `pool.mode`, sharing node health state and blacklists with the main pool
@@ -33,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enables Clash-compatible tooling integration
 
 ### Changed
+- **Health Probe**: Probes now request the path configured in `probe_target` (previously hardcoded `/generate_204`), honor the caller's timeout for read/write deadlines, and run exit-IP/GeoIP detection in the background so it no longer slows health-check sweeps
 - **Subscription Parsing**: Improved Clash YAML format detection
   - User-Agent changed to `clash-verge/v2.2.3` for better compatibility
   - YAML detection sample size increased from 200 to 16384 characters

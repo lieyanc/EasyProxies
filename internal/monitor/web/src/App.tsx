@@ -263,7 +263,8 @@ const DEFAULT_CORE_FORM: CoreSettingsForm = {
     listen: "",
     password: "",
     health_check_interval: "5m",
-    health_check_concurrency: ""
+    health_check_concurrency: "",
+    initial_check_concurrency: ""
   },
   log: {
     output: "stdout",
@@ -2673,6 +2674,15 @@ function SettingsView({
                 placeholder="CPU 核心数"
               />
             </Field>
+            <Field label="启动初检并发">
+              <Input
+                type="number"
+                min={1}
+                value={form.management.initial_check_concurrency}
+                onChange={(event) => patch("management", { initial_check_concurrency: event.target.value })}
+                placeholder="20"
+              />
+            </Field>
           </div>
         </Section>
 
@@ -3766,6 +3776,9 @@ function normalizeCoreForm(
       health_check_interval: settings.management?.health_check_interval || "5m",
       health_check_concurrency: settings.management?.health_check_concurrency
         ? String(settings.management.health_check_concurrency)
+        : "",
+      initial_check_concurrency: settings.management?.initial_check_concurrency
+        ? String(settings.management.initial_check_concurrency)
         : ""
     },
     log: {
@@ -3821,7 +3834,8 @@ function buildCorePayload(form: CoreSettingsForm) {
       listen: form.management.listen,
       password: form.management.password,
       health_check_interval: form.management.health_check_interval || "5m",
-      health_check_concurrency: Number(form.management.health_check_concurrency) || 0
+      health_check_concurrency: Number(form.management.health_check_concurrency) || 0,
+      initial_check_concurrency: Number(form.management.initial_check_concurrency) || 0
     },
     log: {
       output: form.log.output,

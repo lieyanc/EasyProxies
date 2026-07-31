@@ -132,6 +132,7 @@ export type SettingsResponse = {
     password?: string;
     health_check_interval?: string;
     health_check_concurrency?: number;
+    initial_check_concurrency?: number;
   };
   log?: {
     output?: string;
@@ -182,6 +183,7 @@ export type CoreSettingsForm = {
     password: string;
     health_check_interval: string;
     health_check_concurrency: string;
+    initial_check_concurrency: string;
   };
   log: {
     output: string;

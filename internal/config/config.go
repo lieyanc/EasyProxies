@@ -169,12 +169,13 @@ type MultiPortConfig struct {
 
 // ManagementConfig controls the monitoring HTTP endpoint.
 type ManagementConfig struct {
-	Enabled                *bool         `yaml:"enabled"`
-	Listen                 string        `yaml:"listen"`
-	ProbeTarget            string        `yaml:"probe_target"`
-	HealthCheckInterval    time.Duration `yaml:"health_check_interval"`    // 后台健康检查间隔
-	HealthCheckConcurrency int           `yaml:"health_check_concurrency"` // 后台健康检查并发数
-	Password               string        `yaml:"password"`                 // WebUI 访问密码，为空则不需要密码
+	Enabled                 *bool         `yaml:"enabled"`
+	Listen                  string        `yaml:"listen"`
+	ProbeTarget             string        `yaml:"probe_target"`
+	HealthCheckInterval     time.Duration `yaml:"health_check_interval"`     // 后台健康检查间隔
+	HealthCheckConcurrency  int           `yaml:"health_check_concurrency"`  // 后台健康检查并发数
+	InitialCheckConcurrency int           `yaml:"initial_check_concurrency"` // 启动初始检查并发数
+	Password                string        `yaml:"password"`                  // WebUI 访问密码，为空则不需要密码
 }
 
 // DefaultHealthCheckConcurrency returns the default background health check
@@ -185,6 +186,12 @@ func DefaultHealthCheckConcurrency() int {
 		return 1
 	}
 	return n
+}
+
+// DefaultInitialCheckConcurrency returns the default concurrency for the
+// startup initial health check sweep.
+func DefaultInitialCheckConcurrency() int {
+	return 20
 }
 
 // SubscriptionRefreshConfig controls subscription auto-refresh and reload settings.
@@ -343,6 +350,9 @@ func (c *Config) normalize() error {
 	}
 	if c.Management.HealthCheckConcurrency <= 0 {
 		c.Management.HealthCheckConcurrency = DefaultHealthCheckConcurrency()
+	}
+	if c.Management.InitialCheckConcurrency <= 0 {
+		c.Management.InitialCheckConcurrency = DefaultInitialCheckConcurrency()
 	}
 	if c.Management.Enabled == nil {
 		defaultEnabled := true
@@ -581,6 +591,9 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	}
 	if c.Management.HealthCheckConcurrency <= 0 {
 		c.Management.HealthCheckConcurrency = DefaultHealthCheckConcurrency()
+	}
+	if c.Management.InitialCheckConcurrency <= 0 {
+		c.Management.InitialCheckConcurrency = DefaultInitialCheckConcurrency()
 	}
 	if c.Management.Enabled == nil {
 		defaultEnabled := true

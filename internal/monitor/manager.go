@@ -21,18 +21,19 @@ import (
 
 // Config mirrors user settings needed by the monitoring server.
 type Config struct {
-	Enabled                bool
-	Listen                 string
-	ProbeTarget            string
-	HealthCheckInterval    time.Duration
-	HealthCheckConcurrency int
-	Password               string
-	ProxyUsername          string // 代理池的用户名（用于导出）
-	ProxyPassword          string // 代理池的密码（用于导出）
-	ExternalIP             string // 外部 IP 地址，用于导出时替换 0.0.0.0
-	SkipCertVerify         bool   // 全局跳过 SSL 证书验证
-	ExitIPProbeMode        string
-	ExitIPProbeInterval    time.Duration
+	Enabled                 bool
+	Listen                  string
+	ProbeTarget             string
+	HealthCheckInterval     time.Duration
+	HealthCheckConcurrency  int
+	InitialCheckConcurrency int
+	Password                string
+	ProxyUsername           string // 代理池的用户名（用于导出）
+	ProxyPassword           string // 代理池的密码（用于导出）
+	ExternalIP              string // 外部 IP 地址，用于导出时替换 0.0.0.0
+	SkipCertVerify          bool   // 全局跳过 SSL 证书验证
+	ExitIPProbeMode         string
+	ExitIPProbeInterval     time.Duration
 }
 
 // NodeInfo is static metadata about a proxy entry.
@@ -113,6 +114,7 @@ type cachedGeoInfo struct {
 type Manager struct {
 	cfg          Config
 	probeDst     M.Socksaddr
+	probePath    string
 	probeReady   bool
 	mu           sync.RWMutex
 	nodes        map[string]*entry
@@ -150,8 +152,11 @@ func NewManager(cfg Config) (*Manager, error) {
 		} else if strings.HasPrefix(target, "http://") {
 			target = strings.TrimPrefix(target, "http://")
 		}
-		// Remove trailing path if present
+		// Split off the path so probes can request the configured endpoint
 		if idx := strings.Index(target, "/"); idx != -1 {
+			if path := target[idx:]; path != "/" {
+				m.probePath = path
+			}
 			target = target[:idx]
 		}
 		host, port, err := net.SplitHostPort(target)
@@ -310,6 +315,14 @@ func (m *Manager) probeAllNodesWithContext(parent context.Context, timeout time.
 	var availableCount atomic.Int32
 	var failedCount atomic.Int32
 
+	type retryItem struct {
+		entry *entry
+		probe probeFunc
+		tag   string
+	}
+	var retryMu sync.Mutex
+	var retryQueue []retryItem
+
 	for _, e := range entries {
 		e.mu.RLock()
 		probeFn := e.probe
@@ -331,28 +344,67 @@ func (m *Manager) probeAllNodesWithContext(parent context.Context, timeout time.
 			latency, err := probe(ctx)
 			cancel()
 
-			entry.mu.Lock()
-			if err != nil {
-				failedCount.Add(1)
-				entry.lastError = err.Error()
-				entry.lastFail = time.Now()
-				entry.available = false
-				entry.initialCheckDone = true
-			} else {
+			if err == nil {
 				availableCount.Add(1)
-				entry.lastOK = time.Now()
-				entry.lastProbe = latency
-				entry.available = true
-				entry.initialCheckDone = true
+				entry.markProbeSuccess(latency)
+				return
 			}
-			entry.mu.Unlock()
 
-			if err != nil && m.logger != nil {
+			// 之前可用的节点探测失败时先不下线，主扫描结束后进入
+			// 串行慢速队列复测，避免并发探测拥塞造成误杀。
+			entry.mu.RLock()
+			secondChance := entry.initialCheckDone && entry.available
+			entry.mu.RUnlock()
+			if secondChance && parent.Err() == nil {
+				retryMu.Lock()
+				retryQueue = append(retryQueue, retryItem{entry: entry, probe: probe, tag: tag})
+				retryMu.Unlock()
+				return
+			}
+
+			failedCount.Add(1)
+			entry.markProbeFailure(err)
+			if m.logger != nil {
 				m.logger.Warn("probe failed for ", tag, ": ", err)
 			}
 		}(e, probeFn, tag)
 	}
 	wg.Wait()
+
+	// Slow retest queue: single-worker, relaxed timeout, runs after the
+	// concurrent sweep so a transient congestion spike can't kill good nodes.
+	if len(retryQueue) > 0 {
+		if m.logger != nil {
+			m.logger.Info("retesting ", len(retryQueue), " failed node(s) in slow queue")
+		}
+		slowTimeout := timeout * 2
+		rescued := 0
+		for _, item := range retryQueue {
+			if parent.Err() != nil {
+				// Shutting down: keep previous state instead of guessing.
+				return
+			}
+			ctx, cancel := context.WithTimeout(parent, slowTimeout)
+			ctx = ContextWithProbeReason(ctx, reason)
+			latency, err := item.probe(ctx)
+			cancel()
+
+			if err == nil {
+				availableCount.Add(1)
+				item.entry.markProbeSuccess(latency)
+				rescued++
+				continue
+			}
+			failedCount.Add(1)
+			item.entry.markProbeFailure(err)
+			if m.logger != nil {
+				m.logger.Warn("probe failed for ", item.tag, " after slow retest: ", err)
+			}
+		}
+		if m.logger != nil && rescued > 0 {
+			m.logger.Info("slow retest rescued ", rescued, " node(s) from false negatives")
+		}
+	}
 
 	if m.logger != nil {
 		m.logger.Info("health check completed: ", availableCount.Load(), " available, ", failedCount.Load(), " failed")
@@ -425,6 +477,19 @@ func (m *Manager) HealthCheckConcurrency() int {
 	return normalizeHealthCheckConcurrency(concurrency)
 }
 
+func (m *Manager) SetInitialCheckConcurrency(concurrency int) {
+	m.mu.Lock()
+	m.cfg.InitialCheckConcurrency = normalizeInitialCheckConcurrency(concurrency)
+	m.mu.Unlock()
+}
+
+func (m *Manager) InitialCheckConcurrency() int {
+	m.mu.RLock()
+	concurrency := m.cfg.InitialCheckConcurrency
+	m.mu.RUnlock()
+	return normalizeInitialCheckConcurrency(concurrency)
+}
+
 // ShouldUpdateExitIP reports whether this probe may update GeoIP egress data.
 // The boolean return pair is (shouldUpdate, throttleByInterval).
 func (m *Manager) ShouldUpdateExitIP(ctx context.Context) (bool, bool) {
@@ -454,6 +519,13 @@ func normalizeHealthCheckConcurrency(concurrency int) int {
 		return 1
 	}
 	return n
+}
+
+func normalizeInitialCheckConcurrency(concurrency int) int {
+	if concurrency > 0 {
+		return concurrency
+	}
+	return 20
 }
 
 func parsePort(value string) uint16 {
@@ -581,6 +653,15 @@ func (m *Manager) DestinationForProbe() (M.Socksaddr, bool) {
 		return M.Socksaddr{}, false
 	}
 	return m.probeDst, true
+}
+
+// ProbePath returns the HTTP path health probes should request, taken from
+// the configured probe target. Falls back to /generate_204.
+func (m *Manager) ProbePath() string {
+	if m.probePath != "" {
+		return m.probePath
+	}
+	return "/generate_204"
 }
 
 // Snapshot returns a sorted copy of current node states.
@@ -717,6 +798,26 @@ func (m *Manager) entry(tag string) (*entry, error) {
 		return nil, fmt.Errorf("node %s not found", tag)
 	}
 	return e, nil
+}
+
+// markProbeSuccess finalizes a health-check success on the entry.
+func (e *entry) markProbeSuccess(latency time.Duration) {
+	e.mu.Lock()
+	e.lastOK = time.Now()
+	e.lastProbe = latency
+	e.available = true
+	e.initialCheckDone = true
+	e.mu.Unlock()
+}
+
+// markProbeFailure finalizes a health-check failure on the entry.
+func (e *entry) markProbeFailure(err error) {
+	e.mu.Lock()
+	e.lastError = err.Error()
+	e.lastFail = time.Now()
+	e.available = false
+	e.initialCheckDone = true
+	e.mu.Unlock()
 }
 
 func (e *entry) snapshot() Snapshot {

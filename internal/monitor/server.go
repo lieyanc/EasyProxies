@@ -355,6 +355,7 @@ func (s *Server) SetConfig(cfg *config.Config) {
 		s.cfg.ProbeTarget = cfg.Management.ProbeTarget
 		s.cfg.HealthCheckInterval = cfg.Management.HealthCheckInterval
 		s.cfg.HealthCheckConcurrency = cfg.Management.HealthCheckConcurrency
+		s.cfg.InitialCheckConcurrency = cfg.Management.InitialCheckConcurrency
 		s.cfg.SkipCertVerify = cfg.SkipCertVerify
 		s.cfg.ExitIPProbeMode = cfg.GeoIP.ExitIPProbeMode
 		s.cfg.ExitIPProbeInterval = cfg.GeoIP.ExitIPProbeInterval
@@ -1297,10 +1298,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"blacklist_duration": cfg.Pool.BlacklistDuration.String(),
 			}
 			resp["management"] = map[string]any{
-				"listen":                   cfg.Management.Listen,
-				"password":                 cfg.Management.Password,
-				"health_check_interval":    cfg.Management.HealthCheckInterval.String(),
-				"health_check_concurrency": cfg.Management.HealthCheckConcurrency,
+				"listen":                    cfg.Management.Listen,
+				"password":                  cfg.Management.Password,
+				"health_check_interval":     cfg.Management.HealthCheckInterval.String(),
+				"health_check_concurrency":  cfg.Management.HealthCheckConcurrency,
+				"initial_check_concurrency": cfg.Management.InitialCheckConcurrency,
 			}
 			resp["geoip"] = map[string]any{
 				"enabled":                cfg.GeoIP.Enabled,
@@ -1347,10 +1349,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				BlacklistDuration string `json:"blacklist_duration"`
 			} `json:"pool,omitempty"`
 			Management *struct {
-				Listen                 string `json:"listen"`
-				Password               string `json:"password"`
-				HealthCheckInterval    string `json:"health_check_interval"`
-				HealthCheckConcurrency int    `json:"health_check_concurrency"`
+				Listen                  string `json:"listen"`
+				Password                string `json:"password"`
+				HealthCheckInterval     string `json:"health_check_interval"`
+				HealthCheckConcurrency  int    `json:"health_check_concurrency"`
+				InitialCheckConcurrency int    `json:"initial_check_concurrency"`
 			} `json:"management,omitempty"`
 			Log *struct {
 				Output     string `json:"output"`
@@ -1455,6 +1458,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			if nextCfg.Management.HealthCheckConcurrency <= 0 {
 				nextCfg.Management.HealthCheckConcurrency = config.DefaultHealthCheckConcurrency()
 			}
+			nextCfg.Management.InitialCheckConcurrency = req.Management.InitialCheckConcurrency
+			if nextCfg.Management.InitialCheckConcurrency <= 0 {
+				nextCfg.Management.InitialCheckConcurrency = config.DefaultInitialCheckConcurrency()
+			}
 		}
 		if logCfg != nil {
 			nextCfg.Log.Output = logCfg.Output
@@ -1548,10 +1555,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Listen = nextCfg.Management.Listen
 		s.cfg.HealthCheckInterval = nextCfg.Management.HealthCheckInterval
 		s.cfg.HealthCheckConcurrency = nextCfg.Management.HealthCheckConcurrency
+		s.cfg.InitialCheckConcurrency = nextCfg.Management.InitialCheckConcurrency
 		s.cfg.ExitIPProbeMode = nextCfg.GeoIP.ExitIPProbeMode
 		s.cfg.ExitIPProbeInterval = nextCfg.GeoIP.ExitIPProbeInterval
 		if s.mgr != nil {
 			s.mgr.SetHealthCheckConcurrency(nextCfg.Management.HealthCheckConcurrency)
+			s.mgr.SetInitialCheckConcurrency(nextCfg.Management.InitialCheckConcurrency)
 			s.mgr.SetExitIPProbeMode(nextCfg.GeoIP.ExitIPProbeMode)
 			s.mgr.SetExitIPProbeInterval(nextCfg.GeoIP.ExitIPProbeInterval)
 		}

@@ -103,6 +103,7 @@ management:
   probe_target: http://cp.cloudflare.com/generate_204  # 健康检查目标
   health_check_interval: 5m                          # 后台健康检查间隔
   health_check_concurrency: 0                         # 后台健康检查并发数；0 表示 CPU 核心数
+  initial_check_concurrency: 0                        # 启动初始检查并发数；0 表示默认 20
   password: ""                                       # WebUI 访问密码；仅本机监听允许为空
 
 # ───────────────────────────────────────────────────────────────
