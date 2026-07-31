@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Cloudflare WARP**: Register ordinary single-layer WARP accounts from the WebUI and use them as WireGuard pool nodes without wgcf, Google Play/FCM, or Gool Pair
 - **Log Rotation**: Configurable log file rotation with size limits, backup count, and compression
   - New `log` section in config with `output`, `file`, `max_size`, `max_backups`, `max_age`, `compress` options
   - Uses lumberjack for automatic log rotation

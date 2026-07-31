@@ -15,6 +15,7 @@ import (
 	"easy-proxies/internal/config"
 	"easy-proxies/internal/geoip"
 	poolout "easy-proxies/internal/outbound/pool"
+	"easy-proxies/internal/warp"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -31,6 +32,7 @@ func Build(cfg *config.Config) (option.Options, error) {
 	metadata := make(map[string]poolout.MemberMeta)
 	var failedNodes []string
 	usedTags := make(map[string]int) // Track tag usage for uniqueness
+	hasWARP := false
 
 	totalNodes := len(cfg.Nodes)
 	for i, node := range cfg.Nodes {
@@ -59,6 +61,9 @@ func Build(cfg *config.Config) (option.Options, error) {
 		}
 		memberTags = append(memberTags, tag)
 		baseOutbounds = append(baseOutbounds, outbound)
+		if outbound.Type == C.TypeWireGuard {
+			hasWARP = true
+		}
 		meta := poolout.MemberMeta{
 			Name: node.Name,
 			URI:  node.URI,
@@ -264,7 +269,26 @@ func Build(cfg *config.Config) (option.Options, error) {
 			},
 		},
 	}
+	if hasWARP {
+		opts.DNS = warpEndpointDNSOptions()
+	}
 	return opts, nil
+}
+
+func warpEndpointDNSOptions() *option.DNSOptions {
+	return &option.DNSOptions{RawDNSOptions: option.RawDNSOptions{
+		Servers: []option.DNSServerOptions{{
+			Type: C.DNSTypeHTTPS,
+			Tag:  "dns-warp-endpoint",
+			Options: &option.RemoteHTTPSDNSServerOptions{
+				RemoteTLSDNSServerOptions: option.RemoteTLSDNSServerOptions{
+					RemoteDNSServerOptions: option.RemoteDNSServerOptions{
+						DNSServerAddressOptions: option.DNSServerAddressOptions{Server: "1.1.1.1"},
+					},
+				},
+			},
+		}},
+	}}
 }
 
 func buildPoolInbound(cfg *config.Config) (option.Inbound, error) {
@@ -318,6 +342,12 @@ func buildNodeOutbound(tag, rawURI string, skipCertVerify bool) (option.Outbound
 		}
 	}
 	switch strings.ToLower(parsed.Scheme) {
+	case "warp":
+		opts, err := buildWARPOptions(rawURI)
+		if err != nil {
+			return option.Outbound{}, err
+		}
+		return option.Outbound{Type: C.TypeWireGuard, Tag: tag, Options: &opts}, nil
 	case "vless":
 		opts, err := buildVLESSOptions(parsed, skipCertVerify)
 		if err != nil {
@@ -375,6 +405,43 @@ func buildNodeOutbound(tag, rawURI string, skipCertVerify bool) (option.Outbound
 	default:
 		return option.Outbound{}, fmt.Errorf("unsupported scheme %q", parsed.Scheme)
 	}
+}
+
+func buildWARPOptions(rawURI string) (option.LegacyWireGuardOutboundOptions, error) {
+	account, err := warp.ParseURI(rawURI)
+	if err != nil {
+		return option.LegacyWireGuardOutboundOptions{}, err
+	}
+	addresses := make([]netip.Prefix, 0, 2)
+	ipv4, err := netip.ParsePrefix(account.IPv4)
+	if err != nil {
+		return option.LegacyWireGuardOutboundOptions{}, fmt.Errorf("parse WARP IPv4 address: %w", err)
+	}
+	addresses = append(addresses, ipv4)
+	if account.IPv6 != "" {
+		ipv6, err := netip.ParsePrefix(account.IPv6)
+		if err != nil {
+			return option.LegacyWireGuardOutboundOptions{}, fmt.Errorf("parse WARP IPv6 address: %w", err)
+		}
+		addresses = append(addresses, ipv6)
+	}
+	return option.LegacyWireGuardOutboundOptions{
+		DialerOptions: option.DialerOptions{
+			// Resolve the WARP endpoint through direct DoH so a local fake-IP
+			// DNS interceptor cannot turn engage.cloudflareclient.com into 198.18/16.
+			DomainResolver: &option.DomainResolveOptions{Server: "dns-warp-endpoint"},
+		},
+		ServerOptions: option.ServerOptions{
+			Server:     account.Endpoint,
+			ServerPort: account.EndpointPort,
+		},
+		LocalAddress:  addresses,
+		PrivateKey:    account.PrivateKey,
+		PeerPublicKey: account.PeerPublicKey,
+		Reserved:      account.Reserved,
+		MTU:           account.MTU,
+		Workers:       1,
+	}, nil
 }
 
 func buildVLESSOptions(u *url.URL, skipCertVerify bool) (option.VLESSOutboundOptions, error) {

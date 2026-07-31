@@ -9,7 +9,7 @@ easy-proxies 是一个基于 sing-box 的代理池管理工具。
 ## 当前能力
 
 - 运行模式：`pool`、`multi-port`、`hybrid`。
-- 实际构建的上游协议：`vmess`、`vless`、`trojan`、`ss/shadowsocks`、`hysteria2/hy2`、`socks5/socks`、`http/https`、`anytls`、`tuic`。
+- 实际构建的上游协议：Cloudflare `warp`、`vmess`、`vless`、`trojan`、`ss/shadowsocks`、`hysteria2/hy2`、`socks5/socks`、`http/https`、`anytls`、`tuic`。
 - 节点来源：
   - `config.yaml` 的 `nodes`
   - `nodes_file`（每行一个 URI）
@@ -164,6 +164,7 @@ dns:
 
 运行时真正支持的协议：
 
+- `warp`（Cloudflare WARP，单层 WireGuard）
 - `vmess`
 - `vless`
 - `trojan`
@@ -173,6 +174,18 @@ dns:
 - `http` / `https`
 - `anytls`
 - `tuic`
+
+### Cloudflare WARP
+
+在 WebUI 的“节点管理”中点击“注册 WARP”即可。EasyProxies 会在本地生成 WireGuard 密钥，通过 Cloudflare 接口注册一个普通 WARP 设备，保存为 `warp://` 节点，并自动重载核心。整个流程不需要 wgcf、Google Play/FCM token，也不需要 Gool Pair。
+
+内部 URI 格式：
+
+```text
+warp://PRIVATE_KEY@endpoint:port?peer_public_key=KEY&ipv4=PREFIX&ipv6=PREFIX&reserved=A,B,C&mtu=1280#name
+```
+
+URI 包含 WireGuard 私钥，请勿公开 `config.yaml`、`nodes.txt`、导出内容、日志或截图。当前仅支持普通单层 WARP，不实现 WARP-in-WARP/Gool Pair。
 
 订阅解析阶段可能识别到更多 URI 前缀（兼容输入），但不在上述列表中的协议会在构建阶段被跳过。
 
@@ -189,6 +202,7 @@ dns:
 - `GET|PUT /api/subscription/config`
 - `GET|POST /api/subscription/status|refresh`
 - `GET|POST|PUT|DELETE /api/nodes/config[...]`
+- `POST /api/warp/register`（注册并启用普通 WARP 节点）
 - `POST /api/reload`
 - `GET /api/version`
 - `GET /api/update/status`

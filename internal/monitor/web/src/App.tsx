@@ -158,7 +158,9 @@ import type {
   TrafficPoint,
   UpdateConfig,
   UpdateStatusResponse,
-  VersionResponse
+  VersionResponse,
+  WarpRegisterForm,
+  WarpRegisterResponse
 } from "@/types";
 
 const NAV_ITEMS: Array<{ id: TabId; label: string; icon: typeof LayoutDashboard }> = [
@@ -231,6 +233,9 @@ const EMPTY_PROBE_PROGRESS: ProbeProgress = {
   failed: 0,
   percent: 0
 };
+
+const DEFAULT_WARP_ENDPOINT = "engage.cloudflareclient.com";
+const DEFAULT_WARP_PORT = 2408;
 
 const DEFAULT_CORE_FORM: CoreSettingsForm = {
   mode: "pool",
@@ -355,6 +360,13 @@ function App() {
     port: undefined,
     username: "",
     password: ""
+  });
+  const [warpDialogOpen, setWarpDialogOpen] = useState(false);
+  const [warpRegistering, setWarpRegistering] = useState(false);
+  const [warpForm, setWarpForm] = useState<WarpRegisterForm>({
+    name: "WARP-01",
+    endpoint: DEFAULT_WARP_ENDPOINT,
+    endpoint_port: DEFAULT_WARP_PORT
   });
   const [debugData, setDebugData] = useState<DebugResponse>({
     nodes: [],
@@ -801,6 +813,42 @@ function App() {
     setNodeDialogOpen(true);
   }
 
+  function openWarpDialog() {
+    const existingNames = new Set(configNodes.map((node) => node.name));
+    let index = 1;
+    while (existingNames.has(`WARP-${String(index).padStart(2, "0")}`)) index += 1;
+    setWarpForm({
+      name: `WARP-${String(index).padStart(2, "0")}`,
+      endpoint: DEFAULT_WARP_ENDPOINT,
+      endpoint_port: DEFAULT_WARP_PORT
+    });
+    setWarpDialogOpen(true);
+  }
+
+  async function handleWarpRegister(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const payload: WarpRegisterForm = {
+      name: warpForm.name.trim(),
+      endpoint: warpForm.endpoint.trim(),
+      endpoint_port: Number(warpForm.endpoint_port)
+    };
+
+    setWarpRegistering(true);
+    try {
+      const response = await apiJson<WarpRegisterResponse>(
+        "/api/warp/register",
+        jsonRequest("POST", payload)
+      );
+      setWarpDialogOpen(false);
+      await loadConfigNodes();
+      toast.success(response.message || "WARP 已注册并生效");
+    } catch (error) {
+      handleApiError(error, "WARP 注册失败");
+    } finally {
+      setWarpRegistering(false);
+    }
+  }
+
   async function handleNodeSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const payload = {
@@ -1104,6 +1152,7 @@ function App() {
                   <ManageView
                     nodes={configNodes}
                     onAdd={openAddNodeDialog}
+                    onRegisterWarp={openWarpDialog}
                     onEdit={openEditNodeDialog}
                     onDelete={deleteNode}
                     onReload={triggerReload}
@@ -1169,6 +1218,14 @@ function App() {
           form={nodeForm}
           setForm={setNodeForm}
           onSubmit={handleNodeSubmit}
+        />
+        <WarpRegisterDialog
+          open={warpDialogOpen}
+          onOpenChange={setWarpDialogOpen}
+          form={warpForm}
+          setForm={setWarpForm}
+          registering={warpRegistering}
+          onSubmit={handleWarpRegister}
         />
         {loadingOverlay ? (
           <LoadingOverlay title={loadingOverlay.title} detail={loadingOverlay.detail} />
@@ -2067,12 +2124,14 @@ function SpeedOverviewCard({ up, down, active }: { up: number; down: number; act
 function ManageView({
   nodes,
   onAdd,
+  onRegisterWarp,
   onEdit,
   onDelete,
   onReload
 }: {
   nodes: ConfigNode[];
   onAdd: () => void;
+  onRegisterWarp: () => void;
   onEdit: (node: ConfigNode) => void;
   onDelete: (name: string) => void;
   onReload: () => void;
@@ -2087,6 +2146,10 @@ function ManageView({
           <p className="mt-1 text-sm text-muted-foreground">{nodes.length} 个配置节点</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={onRegisterWarp}>
+            <Globe2 className="h-4 w-4" />
+            注册 WARP
+          </Button>
           <Button type="button" onClick={onAdd}>
             <Plus className="h-4 w-4" />
             添加节点
@@ -3332,6 +3395,87 @@ function NodeEditorDialog({
               取消
             </Button>
             <Button type="submit">保存</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function WarpRegisterDialog({
+  open,
+  onOpenChange,
+  form,
+  setForm,
+  registering,
+  onSubmit
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  form: WarpRegisterForm;
+  setForm: React.Dispatch<React.SetStateAction<WarpRegisterForm>>;
+  registering: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !registering && onOpenChange(nextOpen)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>注册 Cloudflare WARP</DialogTitle>
+          <DialogDescription>创建普通 WARP 节点，注册成功后核心会自动重载生效。</DialogDescription>
+        </DialogHeader>
+        <form className="space-y-4" onSubmit={onSubmit}>
+          <Field label="名称">
+            <Input
+              value={form.name}
+              onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+              placeholder="WARP-01"
+              disabled={registering}
+              required
+            />
+          </Field>
+          <div className="grid gap-4 md:grid-cols-[1fr_8rem]">
+            <Field label="Endpoint">
+              <Input
+                value={form.endpoint}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, endpoint: event.target.value }))
+                }
+                placeholder={DEFAULT_WARP_ENDPOINT}
+                disabled={registering}
+                required
+              />
+            </Field>
+            <Field label="端口">
+              <Input
+                type="number"
+                min={1}
+                max={65535}
+                value={form.endpoint_port}
+                onChange={(event) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    endpoint_port: Number(event.target.value)
+                  }))
+                }
+                disabled={registering}
+                required
+              />
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={registering}
+            >
+              取消
+            </Button>
+            <Button type="submit" disabled={registering}>
+              {registering ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {registering ? "注册中" : "注册并生效"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

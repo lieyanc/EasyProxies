@@ -686,8 +686,24 @@ func (m *Manager) createNewConfig(nodes []config.NodeConfig) *config.Config {
 		}
 	}
 
-	newCfg.Nodes = nodes
+	newCfg.Nodes = mergeSubscriptionNodes(newCfg.Nodes, nodes)
 	return newCfg
+}
+
+// mergeSubscriptionNodes keeps manually configured inline nodes while
+// replacing only the subscription-owned portion of the runtime config.
+func mergeSubscriptionNodes(current, subscriptionNodes []config.NodeConfig) []config.NodeConfig {
+	merged := make([]config.NodeConfig, 0, len(current)+len(subscriptionNodes))
+	for _, node := range current {
+		if node.Source == config.NodeSourceInline {
+			merged = append(merged, node)
+		}
+	}
+	for _, node := range subscriptionNodes {
+		node.Source = config.NodeSourceSubscription
+		merged = append(merged, node)
+	}
+	return merged
 }
 
 type defaultLogger struct{}

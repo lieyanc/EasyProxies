@@ -27,6 +27,7 @@ import (
 	"easy-proxies/internal/geoip"
 	"easy-proxies/internal/updater"
 	"easy-proxies/internal/version"
+	"easy-proxies/internal/warp"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -47,6 +48,13 @@ type NodeManager interface {
 	UpdateNode(ctx context.Context, name string, node config.NodeConfig) (config.NodeConfig, error)
 	DeleteNode(ctx context.Context, name string) error
 	TriggerReload(ctx context.Context) error
+}
+
+// WarpRegistrar creates a normal, single-layer Cloudflare WARP account.
+// Gool/WARP-in-WARP pairing is intentionally outside EasyProxies' scope.
+type WarpRegistrar interface {
+	Register(ctx context.Context, name, endpoint string, endpointPort uint16) (warp.Account, error)
+	Delete(ctx context.Context, id, token string) error
 }
 
 // Sentinel errors for node operations.
@@ -92,10 +100,11 @@ type Server struct {
 	// Concurrency control
 	probeSem *semaphore.Weighted
 
-	subRefresher SubscriptionRefresher
-	nodeMgr      NodeManager
-	updater      *updater.Updater
-	trafficHub   *trafficBroadcaster
+	subRefresher  SubscriptionRefresher
+	nodeMgr       NodeManager
+	warpRegistrar WarpRegistrar
+	updater       *updater.Updater
+	trafficHub    *trafficBroadcaster
 }
 
 const trafficAPIURL = "http://127.0.0.1:9092/traffic"
@@ -250,13 +259,14 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	}
 
 	s := &Server{
-		cfg:        cfg,
-		mgr:        mgr,
-		logger:     logger,
-		sessions:   make(map[string]*Session),
-		sessionTTL: 24 * time.Hour,
-		probeSem:   semaphore.NewWeighted(maxConcurrentProbes),
-		trafficHub: newTrafficBroadcaster(logger),
+		cfg:           cfg,
+		mgr:           mgr,
+		logger:        logger,
+		sessions:      make(map[string]*Session),
+		sessionTTL:    24 * time.Hour,
+		probeSem:      semaphore.NewWeighted(maxConcurrentProbes),
+		trafficHub:    newTrafficBroadcaster(logger),
+		warpRegistrar: warp.NewClient(),
 	}
 
 	// Start session cleanup goroutine
@@ -271,6 +281,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/nodes/config/", s.withAuth(s.handleConfigNodeItem))
 	mux.HandleFunc("/api/nodes/probe-all", s.withAuth(s.handleProbeAll))
 	mux.HandleFunc("/api/nodes/", s.withAuth(s.handleNodeAction))
+	mux.HandleFunc("/api/warp/register", s.withAuth(s.handleWarpRegister))
 	mux.HandleFunc("/api/debug", s.withAuth(s.handleDebug))
 	mux.HandleFunc("/api/addresses", s.withAuth(s.handleAddresses))
 	mux.HandleFunc("/api/export", s.withAuth(s.handleExport))
@@ -305,6 +316,13 @@ func (s *Server) SetSubscriptionRefresher(sr SubscriptionRefresher) {
 func (s *Server) SetNodeManager(nm NodeManager) {
 	if s != nil {
 		s.nodeMgr = nm
+	}
+}
+
+// SetWarpRegistrar replaces the WARP registration client, primarily for tests.
+func (s *Server) SetWarpRegistrar(registrar WarpRegistrar) {
+	if s != nil {
+		s.warpRegistrar = registrar
 	}
 }
 
@@ -1772,6 +1790,90 @@ func (p nodePayload) toConfig() config.NodeConfig {
 		Username: p.Username,
 		Password: p.Password,
 	}
+}
+
+type warpRegisterPayload struct {
+	Name         string `json:"name"`
+	Endpoint     string `json:"endpoint"`
+	EndpointPort uint16 `json:"endpoint_port"`
+}
+
+// handleWarpRegister registers one ordinary Cloudflare WARP device, stores it
+// as a warp:// node, and reloads the proxy core. It deliberately does not
+// implement Gool Pair/WARP-in-WARP.
+func (s *Server) handleWarpRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.ensureNodeManager(w) {
+		return
+	}
+	if s.warpRegistrar == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSON(w, map[string]any{"error": "WARP 注册服务未启用"})
+		return
+	}
+
+	var payload warpRegisterPayload
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "请求格式错误: " + err.Error()})
+		return
+	}
+	payload.Name = strings.TrimSpace(payload.Name)
+	if payload.Name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "WARP 节点名称不能为空"})
+		return
+	}
+
+	account, err := s.warpRegistrar.Register(r.Context(), payload.Name, payload.Endpoint, payload.EndpointPort)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return
+	}
+	cleanupRemote := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.warpRegistrar.Delete(cleanupCtx, account.ID, account.Token); err != nil {
+			s.logger.Printf("WARP registration cleanup failed for %s: %v", account.ID, err)
+		}
+	}
+
+	uri, err := account.URI()
+	if err != nil {
+		cleanupRemote()
+		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(w, map[string]any{"error": "生成 WARP 节点失败: " + err.Error()})
+		return
+	}
+	node, err := s.nodeMgr.CreateNode(r.Context(), config.NodeConfig{
+		Name:   payload.Name,
+		URI:    uri,
+		Source: config.NodeSourceInline,
+	})
+	if err != nil {
+		cleanupRemote()
+		s.respondNodeError(w, err)
+		return
+	}
+	if err := s.nodeMgr.TriggerReload(r.Context()); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(w, map[string]any{
+			"error": "WARP 节点已注册并保存，但核心重载失败: " + err.Error(),
+			"node":  node,
+		})
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"node":    node,
+		"message": "WARP 已注册并自动重载生效",
+	})
 }
 
 // handleConfigNodes handles GET (list) and POST (create) for config nodes.

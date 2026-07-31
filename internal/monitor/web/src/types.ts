@@ -76,6 +76,17 @@ export type ConfigNode = {
   source?: string;
 };
 
+export type WarpRegisterForm = {
+  name: string;
+  endpoint: string;
+  endpoint_port: number;
+};
+
+export type WarpRegisterResponse = {
+  node: ConfigNode;
+  message?: string;
+};
+
 export type SubscriptionStatus = {
   enabled: boolean;
   message?: string;

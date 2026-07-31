@@ -7,7 +7,7 @@
 ## Features
 
 - **Three runtime modes**: `pool` (single-port load balancing), `multi-port` (one port per node), and `hybrid` (both simultaneously)
-- **Wide protocol support**: VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, AnyTLS, SOCKS5, HTTP/HTTPS
+- **Wide protocol support**: Cloudflare WARP, VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, AnyTLS, SOCKS5, HTTP/HTTPS
 - **Automatic health checking** with configurable failure thresholds and blacklist duration, plus manual blacklist/release from the dashboard
 - **GeoIP region routing**: classify nodes by country and route traffic through a specific region via a dedicated HTTP proxy endpoint
 - **Multiple node sources**: inline config, `nodes.txt` file, or subscription URLs (Base64, plain text, Clash YAML)
@@ -279,6 +279,7 @@ resp, err := client.Get("http://example.com")
 
 | Protocol | URI Schemes | Transport |
 |----------|-------------|-----------|
+| Cloudflare WARP | `warp://` | Single-layer WireGuard tunnel |
 | VLESS | `vless://` | TCP, WS, HTTP/2, gRPC, HTTPUpgrade; TLS/Reality/uTLS |
 | VMess | `vmess://` | WS, HTTP/2, gRPC, HTTPUpgrade; TLS/uTLS |
 | Trojan | `trojan://` | WS, HTTP/2, gRPC, HTTPUpgrade; TLS/Reality/uTLS |
@@ -288,6 +289,18 @@ resp, err := client.Get("http://example.com")
 | AnyTLS | `anytls://` | TLS |
 | SOCKS5 | `socks5://`, `socks://` | Direct |
 | HTTP | `http://`, `https://` | Direct |
+
+### Cloudflare WARP
+
+Open **Node Config** in the WebUI and click **Register WARP**. EasyProxies generates a WireGuard key pair locally, registers one ordinary WARP device with Cloudflare, stores it as a `warp://` node, and reloads the proxy core automatically. No wgcf, Google Play/FCM token, or Gool Pair is required.
+
+The internal URI format is:
+
+```text
+warp://PRIVATE_KEY@endpoint:port?peer_public_key=KEY&ipv4=PREFIX&ipv6=PREFIX&reserved=A,B,C&mtu=1280#name
+```
+
+The URI contains a private WireGuard key. Keep `config.yaml`, `nodes.txt`, exports, logs, and screenshots private. The current integration intentionally supports only a normal single-layer WARP tunnel, not WARP-in-WARP/Gool Pair.
 
 ## Node Sources
 
@@ -349,6 +362,7 @@ When `management.password` is empty, authentication is bypassed, but the managem
 | `/api/subscription/status` | GET | Check subscription status |
 | `/api/subscription/refresh` | POST | Trigger manual refresh |
 | `/api/nodes/config` | GET, POST, PUT, DELETE | CRUD for node config |
+| `/api/warp/register` | POST | Register and activate one ordinary Cloudflare WARP node |
 | `/api/reload` | POST | Reload sing-box instance |
 | `/api/version` | GET | Runtime version metadata |
 | `/api/update/status` | GET | OTA update status |

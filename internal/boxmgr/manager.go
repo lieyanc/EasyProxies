@@ -705,14 +705,21 @@ func (m *Manager) CreateNode(ctx context.Context, node config.NodeConfig) (confi
 		return config.NodeConfig{}, err
 	}
 
-	// Determine source: if subscriptions exist, new nodes go to nodes.txt (subscription source)
-	// Otherwise, if nodes_file exists, use file source; else inline
-	if len(m.cfg.Subscriptions) > 0 {
-		normalized.Source = config.NodeSourceSubscription
-	} else if m.cfg.NodesFile != "" {
-		normalized.Source = config.NodeSourceFile
-	} else {
-		normalized.Source = config.NodeSourceInline
+	// Respect an explicit source chosen by internal callers. The WARP registrar
+	// uses inline storage so subscription refreshes cannot overwrite its keys.
+	switch node.Source {
+	case config.NodeSourceInline, config.NodeSourceFile, config.NodeSourceSubscription:
+		normalized.Source = node.Source
+	default:
+		// Determine source: if subscriptions exist, new nodes go to nodes.txt
+		// (subscription source). Otherwise use nodes_file when configured.
+		if len(m.cfg.Subscriptions) > 0 {
+			normalized.Source = config.NodeSourceSubscription
+		} else if m.cfg.NodesFile != "" {
+			normalized.Source = config.NodeSourceFile
+		} else {
+			normalized.Source = config.NodeSourceInline
+		}
 	}
 
 	m.cfg.Nodes = append(m.cfg.Nodes, normalized)

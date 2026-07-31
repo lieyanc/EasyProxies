@@ -2,6 +2,9 @@
 # 每行一个代理节点 URI，名称会自动从 #后面提取
 # 以 # 开头的行是注释，空行会被忽略
 
+# Cloudflare WARP（推荐在 WebUI 点击“注册 WARP”生成；URI 含私钥，请勿公开）
+# warp://PRIVATE_KEY@engage.cloudflareclient.com:2408?peer_public_key=PEER_KEY&ipv4=172.16.0.2%2F32&ipv6=2606%3A4700%3A110%3A8765%3A%3A2%2F128&reserved=1%2C2%2C3&mtu=1280#WARP-01
+
 # VLESS 协议示例
 vless://c5f7fbb5-2018-4295-8ff9-340d720c63c9@hinet-tw-01-ddns.sakuraikaede.com:30001?encryption=none&flow=xtls-rprx-vision&security=reality&sni=swcdn.apple.com&fp=chrome&pbk=N4ID6C12xSHKASsdAa5tff7br6Ns8ehIRYDzhjZL_ns&sid=267D949F&type=tcp&headerType=none&host=swcdn.apple.com#TW-VLESS节点
 
