@@ -1293,9 +1293,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				poolMode = "sequential"
 			}
 			resp["pool"] = map[string]any{
-				"mode":               poolMode,
-				"failure_threshold":  cfg.Pool.FailureThreshold,
-				"blacklist_duration": cfg.Pool.BlacklistDuration.String(),
+				"mode":                 poolMode,
+				"failure_threshold":    cfg.Pool.FailureThreshold,
+				"blacklist_duration":   cfg.Pool.BlacklistDuration.String(),
+				"round_robin_entry":    cfg.Pool.RoundRobinEntry,
+				"round_robin_username": cfg.Pool.RoundRobinUsername,
 			}
 			resp["management"] = map[string]any{
 				"listen":                    cfg.Management.Listen,
@@ -1344,9 +1346,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				Password string `json:"password"`
 			} `json:"multi_port,omitempty"`
 			Pool *struct {
-				Mode              string `json:"mode"`
-				FailureThreshold  int    `json:"failure_threshold"`
-				BlacklistDuration string `json:"blacklist_duration"`
+				Mode               string `json:"mode"`
+				FailureThreshold   int    `json:"failure_threshold"`
+				BlacklistDuration  string `json:"blacklist_duration"`
+				RoundRobinEntry    bool   `json:"round_robin_entry"`
+				RoundRobinUsername string `json:"round_robin_username"`
 			} `json:"pool,omitempty"`
 			Management *struct {
 				Listen                  string `json:"listen"`
@@ -1440,6 +1444,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			nextCfg.Pool.Mode = poolMode
 			nextCfg.Pool.FailureThreshold = req.Pool.FailureThreshold
+			nextCfg.Pool.RoundRobinEntry = req.Pool.RoundRobinEntry
+			nextCfg.Pool.RoundRobinUsername = strings.TrimSpace(req.Pool.RoundRobinUsername)
 			if req.Pool.BlacklistDuration != "" {
 				if d, err := time.ParseDuration(req.Pool.BlacklistDuration); err == nil {
 					nextCfg.Pool.BlacklistDuration = d

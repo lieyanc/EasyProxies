@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `pool.round_robin_entry: true` exposes `<listener.username>-rr` (or a custom `pool.round_robin_username`) on the same port
   - Always schedules round-robin regardless of `pool.mode`, sharing node health state and blacklists with the main pool
   - Shown in WebUI connection addresses and plain-text export
+  - Toggle and username editable from the WebUI settings panel (代理池 section)
 - **Cloudflare WARP**: Register ordinary single-layer WARP accounts from the WebUI and use them as WireGuard pool nodes without wgcf, Google Play/FCM, or Gool Pair
 - **Log Rotation**: Configurable log file rotation with size limits, backup count, and compression
   - New `log` section in config with `output`, `file`, `max_size`, `max_backups`, `max_age`, `compress` options

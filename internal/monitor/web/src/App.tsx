@@ -257,7 +257,9 @@ const DEFAULT_CORE_FORM: CoreSettingsForm = {
   pool: {
     mode: "sequential",
     failure_threshold: "3",
-    blacklist_duration: "24h"
+    blacklist_duration: "24h",
+    round_robin_entry: false,
+    round_robin_username: ""
   },
   management: {
     listen: "",
@@ -2639,6 +2641,20 @@ function SettingsView({
                 onChange={(event) => patch("pool", { blacklist_duration: event.target.value })}
               />
             </Field>
+            <SwitchField
+              label="轮询入口（用户名区分，强制轮询调度）"
+              checked={form.pool.round_robin_entry}
+              onCheckedChange={(round_robin_entry) => patch("pool", { round_robin_entry })}
+            />
+            {form.pool.round_robin_entry ? (
+              <Field label="轮询入口用户名">
+                <Input
+                  value={form.pool.round_robin_username}
+                  onChange={(event) => patch("pool", { round_robin_username: event.target.value })}
+                  placeholder={form.listener.username ? `${form.listener.username}-rr` : "rr"}
+                />
+              </Field>
+            ) : null}
           </div>
         </Section>
 
@@ -3768,7 +3784,9 @@ function normalizeCoreForm(
     pool: {
       mode: normalizePoolMode(settings.pool?.mode),
       failure_threshold: String(settings.pool?.failure_threshold || 3),
-      blacklist_duration: settings.pool?.blacklist_duration || "24h"
+      blacklist_duration: settings.pool?.blacklist_duration || "24h",
+      round_robin_entry: Boolean(settings.pool?.round_robin_entry),
+      round_robin_username: settings.pool?.round_robin_username || ""
     },
     management: {
       listen: settings.management?.listen || "",
@@ -3828,7 +3846,9 @@ function buildCorePayload(form: CoreSettingsForm) {
     pool: {
       mode: normalizePoolMode(form.pool.mode),
       failure_threshold: Number(form.pool.failure_threshold) || 3,
-      blacklist_duration: form.pool.blacklist_duration || "24h"
+      blacklist_duration: form.pool.blacklist_duration || "24h",
+      round_robin_entry: form.pool.round_robin_entry,
+      round_robin_username: form.pool.round_robin_username.trim()
     },
     management: {
       listen: form.management.listen,

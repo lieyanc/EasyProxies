@@ -126,6 +126,8 @@ export type SettingsResponse = {
     mode?: string;
     failure_threshold?: number;
     blacklist_duration?: string;
+    round_robin_entry?: boolean;
+    round_robin_username?: string;
   };
   management?: {
     listen?: string;
@@ -177,6 +179,8 @@ export type CoreSettingsForm = {
     mode: string;
     failure_threshold: string;
     blacklist_duration: string;
+    round_robin_entry: boolean;
+    round_robin_username: string;
   };
   management: {
     listen: string;
