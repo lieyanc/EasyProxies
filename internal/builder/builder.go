@@ -25,6 +25,10 @@ import (
 
 const poolInboundTag = "http-in"
 
+// roundRobinPoolTag is the outbound tag for the optional username-selected
+// round-robin pool entry.
+const roundRobinPoolTag = "pool-rr"
+
 // Build converts high level config into sing-box Options tree.
 func Build(cfg *config.Config) (option.Options, error) {
 	baseOutbounds := make([]option.Outbound, 0, len(cfg.Nodes))
@@ -145,6 +149,47 @@ func Build(cfg *config.Config) (option.Options, error) {
 		if enablePoolInbound {
 			route.Final = poolout.Tag
 		}
+	}
+
+	// Build the optional round-robin entry: an extra auth username on the pool
+	// listener routed to a sequential-mode pool over the same members, so a
+	// latency-mode pool can offer per-request rotation on the same port.
+	if cfg.Pool.RoundRobinEntry && enablePoolInbound {
+		rrUsername, err := roundRobinUsername(cfg)
+		if err != nil {
+			return option.Options{}, err
+		}
+		rrOptions := poolout.Options{
+			Mode:              "sequential",
+			Members:           memberTags,
+			FailureThreshold:  cfg.Pool.FailureThreshold,
+			BlacklistDuration: cfg.Pool.BlacklistDuration,
+			RetryEnabled:      cfg.Pool.RetryEnabledOrDefault(),
+			RetryAttempts:     cfg.Pool.RetryAttempts,
+			Metadata:          metadata,
+			SkipMonitor:       true,
+		}
+		outbounds = append(outbounds, option.Outbound{
+			Type:    poolout.Type,
+			Tag:     roundRobinPoolTag,
+			Options: &rrOptions,
+		})
+		route.Rules = append(route.Rules, option.Rule{
+			Type: C.RuleTypeDefault,
+			DefaultOptions: option.DefaultRule{
+				RawDefaultRule: option.RawDefaultRule{
+					Inbound:  badoption.Listable[string]{poolInboundTag},
+					AuthUser: badoption.Listable[string]{rrUsername},
+				},
+				RuleAction: option.RuleAction{
+					Action: C.RuleActionTypeRoute,
+					RouteOptions: option.RouteActionOptions{
+						Outbound: roundRobinPoolTag,
+					},
+				},
+			},
+		})
+		log.Printf("🔁 Round-robin entry enabled: user %q on %s:%d", rrUsername, cfg.Listener.Address, cfg.Listener.Port)
 	}
 
 	// Build multi-port inbounds (one port per node)
@@ -321,12 +366,35 @@ func buildPoolInbound(cfg *config.Config) (option.Inbound, error) {
 			addUser(geoip.RegionAuthUsername(cfg.Listener.Username, region))
 		}
 	}
+	if cfg.Pool.RoundRobinEntry {
+		addUser(cfg.Pool.RoundRobinAuthUsername(cfg.Listener.Username))
+	}
 	inbound := option.Inbound{
 		Type:    C.TypeMixed,
 		Tag:     poolInboundTag,
 		Options: inboundOptions,
 	}
 	return inbound, nil
+}
+
+// roundRobinUsername resolves the round-robin entry username and rejects
+// values that would shadow the default pool entry or a GeoIP region entry.
+func roundRobinUsername(cfg *config.Config) (string, error) {
+	username := cfg.Pool.RoundRobinAuthUsername(cfg.Listener.Username)
+	if username == strings.TrimSpace(cfg.Listener.Username) {
+		return "", fmt.Errorf("pool round-robin username %q conflicts with listener username", username)
+	}
+	if cfg.GeoIP.Enabled {
+		if username == geoip.GlobalAuthUsername(cfg.Listener.Username) {
+			return "", fmt.Errorf("pool round-robin username %q conflicts with GeoIP global username", username)
+		}
+		for _, region := range geoip.AllRegions() {
+			if username == geoip.RegionAuthUsername(cfg.Listener.Username, region) {
+				return "", fmt.Errorf("pool round-robin username %q conflicts with GeoIP region %q username", username, region)
+			}
+		}
+	}
+	return username, nil
 }
 
 func buildNodeOutbound(tag, rawURI string, skipCertVerify bool) (option.Outbound, error) {
@@ -1353,6 +1421,12 @@ func printProxyLinks(cfg *config.Config, metadata map[string]poolout.MemberMeta)
 		log.Printf("🌐 Pool Entry Point:")
 		log.Printf("   HTTP:   %s", httpProxyURL)
 		log.Printf("   SOCKS5: %s", socksProxyURL)
+		if cfg.Pool.RoundRobinEntry {
+			rrAuth := fmt.Sprintf("%s:%s@", cfg.Pool.RoundRobinAuthUsername(cfg.Listener.Username), cfg.Listener.Password)
+			log.Printf("🔁 Round-Robin Entry Point:")
+			log.Printf("   HTTP:   http://%s%s:%d", rrAuth, cfg.Listener.Address, cfg.Listener.Port)
+			log.Printf("   SOCKS5: socks5://%s%s:%d", rrAuth, cfg.Listener.Address, cfg.Listener.Port)
+		}
 		log.Println("")
 		log.Printf("   Nodes in pool (%d):", len(metadata))
 		for _, meta := range metadata {

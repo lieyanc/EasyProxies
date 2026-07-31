@@ -152,6 +152,12 @@ dns:
 - `multi-port`：每个节点一个独立本地 HTTP/SOCKS5 端口。
 - `hybrid`：同时启用 pool + multi-port。
 
+### 轮询入口（可选）
+
+`pool.mode` 使用 `latency` 等模式时，可在同一端口额外开启一个强制轮询的用户名入口（`pool.round_robin_entry: true`）。
+入口用户名默认为 `<listener.username>-rr`（未设置 listener 用户名时为 `rr`），密码复用 `listener.password`，可用 `pool.round_robin_username` 自定义。
+例如 `curl -x http://user-rr:pass@localhost:2323 ...` 即按请求轮换节点，默认用户名入口仍走 latency 调度。
+
 ## 节点来源行为
 
 - 配置了 `subscriptions` 时：

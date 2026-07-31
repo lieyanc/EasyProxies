@@ -537,12 +537,14 @@ func (s *Server) handleAddresses(w http.ResponseWriter, r *http.Request) {
 	var listenerCfg config.ListenerConfig
 	var multiPortCfg config.MultiPortConfig
 	var geoIPCfg config.GeoIPConfig
+	var poolCfg config.PoolConfig
 	if s.cfgSrc != nil {
 		mode = s.cfgSrc.Mode
 		externalIP = s.cfgSrc.ExternalIP
 		listenerCfg = s.cfgSrc.Listener
 		multiPortCfg = s.cfgSrc.MultiPort
 		geoIPCfg = s.cfgSrc.GeoIP
+		poolCfg = s.cfgSrc.Pool
 	}
 	s.cfgMu.RUnlock()
 
@@ -577,6 +579,29 @@ func (s *Server) handleAddresses(w http.ResponseWriter, r *http.Request) {
 				Port:        listenerCfg.Port,
 			},
 		)
+		if poolCfg.RoundRobinEntry {
+			rrUsername := poolCfg.RoundRobinAuthUsername(listenerCfg.Username)
+			entries = append(entries,
+				addressEntry{
+					ID:          "pool-rr-http",
+					Kind:        "pool",
+					Label:       "Pool 轮询",
+					Description: "用户名轮询入口",
+					Protocol:    "http",
+					URL:         proxyURL("http", rrUsername, listenerCfg.Password, host, listenerCfg.Port, ""),
+					Port:        listenerCfg.Port,
+				},
+				addressEntry{
+					ID:          "pool-rr-socks5",
+					Kind:        "pool",
+					Label:       "Pool 轮询",
+					Description: "用户名轮询入口",
+					Protocol:    "socks5",
+					URL:         proxyURL("socks5", rrUsername, listenerCfg.Password, host, listenerCfg.Port, ""),
+					Port:        listenerCfg.Port,
+				},
+			)
+		}
 	}
 
 	if geoIPCfg.Enabled && showPoolEntry && listenerCfg.Port > 0 {
@@ -1043,10 +1068,12 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	mode := ""
 	var listenerCfg config.ListenerConfig
 	var geoipCfg config.GeoIPConfig
+	var poolCfg config.PoolConfig
 	if s.cfgSrc != nil {
 		mode = s.cfgSrc.Mode
 		listenerCfg = s.cfgSrc.Listener
 		geoipCfg = s.cfgSrc.GeoIP
+		poolCfg = s.cfgSrc.Pool
 	}
 	s.cfgMu.RUnlock()
 
@@ -1077,6 +1104,33 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 			seen[poolHTTP] = true
 			lines = append(lines, poolSocks)
 			seen[poolSocks] = true
+		}
+		if poolCfg.RoundRobinEntry {
+			rrUsername := poolCfg.RoundRobinAuthUsername(listenerCfg.Username)
+			rrHTTP := proxyURL("http", rrUsername, listenerCfg.Password, poolAddr, listenerCfg.Port, "")
+			rrSocks := proxyURL("socks5", rrUsername, listenerCfg.Password, poolAddr, listenerCfg.Port, "")
+			lines = append(lines, "# Pool 轮询入口")
+			switch scheme {
+			case "http":
+				if !seen[rrHTTP] {
+					lines = append(lines, rrHTTP)
+					seen[rrHTTP] = true
+				}
+			case "socks5":
+				if !seen[rrSocks] {
+					lines = append(lines, rrSocks)
+					seen[rrSocks] = true
+				}
+			case "all":
+				if !seen[rrHTTP] {
+					lines = append(lines, rrHTTP)
+					seen[rrHTTP] = true
+				}
+				if !seen[rrSocks] {
+					lines = append(lines, rrSocks)
+					seen[rrSocks] = true
+				}
+			}
 		}
 	}
 

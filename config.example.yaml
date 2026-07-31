@@ -77,6 +77,13 @@ pool:
   retry_enabled: true
   # 重试次数（包含首次拨号），默认 3
   retry_attempts: 3
+  # 轮询入口（可选，pool/hybrid 模式）：在同一监听端口上额外提供一个
+  # 强制轮询调度的用户名入口，与 pool.mode 互不影响。
+  # 例如 mode: latency 时，用 <listener.username>-rr 用户名连接即走轮询。
+  # 注意：未设置 listener.username 时入口用户名为 rr，且启用后该端口需要用户名认证。
+  # round_robin_entry: true
+  # 自定义轮询入口用户名（可选），默认 "<listener.username>-rr"
+  # round_robin_username: rr
 
 # ───────────────────────────────────────────────────────────────
 # 多端口模式配置（multi-port / hybrid 模式使用）

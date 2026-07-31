@@ -102,6 +102,31 @@ Open `http://localhost:9091` in your browser.
 | `sequential` | Round-robin through healthy nodes |
 | `random` | Random node selection |
 | `balance` | Least-connections balancing |
+| `latency` | Lowest-latency healthy node |
+
+#### Optional Round-Robin Entry
+
+When the pool runs in another mode (e.g. `latency`), you can expose an
+extra username on the same listener port that always schedules
+round-robin:
+
+```yaml
+pool:
+  mode: latency
+  round_robin_entry: true
+  # round_robin_username: rr   # optional override
+```
+
+The round-robin user defaults to `<listener.username>-rr` (or `rr` when
+`listener.username` is empty) and reuses `listener.password`:
+
+```bash
+# Default entry: lowest-latency node
+curl -x http://user:pass@localhost:2323 http://example.com
+
+# Round-robin entry: rotate through healthy nodes per request
+curl -x http://user-rr:pass@localhost:2323 http://example.com
+```
 
 ### Minimal Config Example
 

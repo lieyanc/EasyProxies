@@ -112,6 +112,27 @@ type PoolConfig struct {
 	// For pools with multiple members, each retry picks a different member when possible.
 	// For single-member pools (e.g. per-node multi-port pools), retries dial the same member.
 	RetryAttempts int `yaml:"retry_attempts,omitempty"`
+	// RoundRobinEntry exposes an extra auth username on the pool listener that
+	// always schedules round-robin, regardless of pool.mode. This lets e.g. a
+	// latency-mode pool offer a rotating entry on the same port, selected by
+	// username (pool/hybrid modes only).
+	RoundRobinEntry bool `yaml:"round_robin_entry,omitempty"`
+	// RoundRobinUsername overrides the auth username for the round-robin entry.
+	// Default: "<listener.username>-rr", or "rr" when listener.username is empty.
+	RoundRobinUsername string `yaml:"round_robin_username,omitempty"`
+}
+
+// RoundRobinAuthUsername returns the auth username that selects the
+// round-robin pool entry.
+func (p PoolConfig) RoundRobinAuthUsername(baseUsername string) string {
+	if username := strings.TrimSpace(p.RoundRobinUsername); username != "" {
+		return username
+	}
+	baseUsername = strings.TrimSpace(baseUsername)
+	if baseUsername == "" {
+		return "rr"
+	}
+	return baseUsername + "-rr"
 }
 
 // NormalizePoolMode returns the canonical pool scheduler mode.
