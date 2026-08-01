@@ -40,7 +40,7 @@ type Config struct {
 type NodeInfo struct {
 	Tag           string `json:"tag"`
 	Name          string `json:"name"`
-	URI           string `json:"uri"`
+	URI           string `json:"uri,omitempty"`
 	Mode          string `json:"mode"`
 	ListenAddress string `json:"listen_address,omitempty"`
 	Port          uint16 `json:"port,omitempty"`

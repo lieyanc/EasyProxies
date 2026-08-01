@@ -393,6 +393,8 @@ function App() {
     null
   );
   const [githubStars, setGithubStars] = useState("-");
+  // 记录上次 /api/nodes 的原始响应，内容未变时跳过 setState 避免整页重渲染
+  const lastNodesRawRef = useRef("");
 
   const nodes = nodesData.nodes || [];
   const filteredNodes = useMemo(
@@ -511,11 +513,22 @@ function App() {
   const refreshNodes = useCallback(
     async (silent = false) => {
       try {
-        const data = await apiJson<NodesResponse>("/api/nodes");
-        setNodesData({ ...data, nodes: data.nodes || [] });
+        const response = await fetch("/api/nodes");
+        if (response.status === 401) {
+          throw new UnauthorizedError();
+        }
+        if (!response.ok) {
+          throw new Error(response.statusText || "节点数据读取失败");
+        }
+        const raw = await response.text();
         setLastUpdate(`Sync: ${new Date().toLocaleTimeString()}`);
         setAuthenticated(true);
         setLoginOpen(false);
+        if (raw !== lastNodesRawRef.current) {
+          lastNodesRawRef.current = raw;
+          const data = JSON.parse(raw) as NodesResponse;
+          setNodesData({ ...data, nodes: data.nodes || [] });
+        }
         void loadSubscriptionStatus();
       } catch (error) {
         if (!silent) {

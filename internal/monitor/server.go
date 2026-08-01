@@ -3,14 +3,17 @@ package monitor
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	mathrand "math/rand"
 	"net"
@@ -108,6 +111,53 @@ type Server struct {
 }
 
 const trafficAPIURL = "http://127.0.0.1:9092/traffic"
+
+// gzipWriterPool reuses gzip writers across API responses.
+var gzipWriterPool = sync.Pool{
+	New: func() any { return gzip.NewWriter(io.Discard) },
+}
+
+// gzipResponseWriter wraps a ResponseWriter and compresses the body.
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	gz          *gzip.Writer
+	wroteHeader bool
+}
+
+func (g *gzipResponseWriter) WriteHeader(status int) {
+	if !g.wroteHeader {
+		g.Header().Del("Content-Length")
+		g.Header().Set("Content-Encoding", "gzip")
+		g.wroteHeader = true
+	}
+	g.ResponseWriter.WriteHeader(status)
+}
+
+func (g *gzipResponseWriter) Write(p []byte) (int, error) {
+	if !g.wroteHeader {
+		g.WriteHeader(http.StatusOK)
+	}
+	return g.gz.Write(p)
+}
+
+// withGzip compresses responses for clients that accept gzip.
+// Do NOT use on SSE endpoints — the wrapper buffers output and does not flush.
+func withGzip(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next(w, r)
+			return
+		}
+		gz := gzipWriterPool.Get().(*gzip.Writer)
+		gz.Reset(w)
+		grw := &gzipResponseWriter{ResponseWriter: w, gz: gz}
+		defer func() {
+			_ = gz.Close()
+			gzipWriterPool.Put(gz)
+		}()
+		next(grw, r)
+	}
+}
 
 type trafficBroadcaster struct {
 	mu         sync.Mutex
@@ -273,29 +323,33 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	go s.cleanupExpiredSessions()
 
 	mux := http.NewServeMux()
+	// jsonAPI wraps auth + gzip for regular (non-streaming) endpoints.
+	jsonAPI := func(h http.HandlerFunc) http.HandlerFunc {
+		return withGzip(s.withAuth(h))
+	}
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/auth", s.handleAuth)
-	mux.HandleFunc("/api/settings", s.withAuth(s.handleSettings))
-	mux.HandleFunc("/api/nodes", s.withAuth(s.handleNodes))
-	mux.HandleFunc("/api/nodes/config", s.withAuth(s.handleConfigNodes))
-	mux.HandleFunc("/api/nodes/config/", s.withAuth(s.handleConfigNodeItem))
-	mux.HandleFunc("/api/nodes/probe-all", s.withAuth(s.handleProbeAll))
-	mux.HandleFunc("/api/nodes/", s.withAuth(s.handleNodeAction))
-	mux.HandleFunc("/api/warp/register", s.withAuth(s.handleWarpRegister))
-	mux.HandleFunc("/api/debug", s.withAuth(s.handleDebug))
-	mux.HandleFunc("/api/addresses", s.withAuth(s.handleAddresses))
-	mux.HandleFunc("/api/export", s.withAuth(s.handleExport))
-	mux.HandleFunc("/api/subscription/status", s.withAuth(s.handleSubscriptionStatus))
-	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
-	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
-	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
-	mux.HandleFunc("/api/version", s.withAuth(s.handleVersion))
-	mux.HandleFunc("/api/update/status", s.withAuth(s.handleUpdateStatus))
-	mux.HandleFunc("/api/update/check", s.withAuth(s.handleUpdateCheck))
-	mux.HandleFunc("/api/update/apply", s.withAuth(s.handleUpdateApply))
-	mux.HandleFunc("/api/update/dismiss", s.withAuth(s.handleUpdateDismiss))
-	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
-	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
+	mux.HandleFunc("/api/settings", jsonAPI(s.handleSettings))
+	mux.HandleFunc("/api/nodes", jsonAPI(s.handleNodes))
+	mux.HandleFunc("/api/nodes/config", jsonAPI(s.handleConfigNodes))
+	mux.HandleFunc("/api/nodes/config/", jsonAPI(s.handleConfigNodeItem))
+	mux.HandleFunc("/api/nodes/probe-all", s.withAuth(s.handleProbeAll)) // SSE: no gzip
+	mux.HandleFunc("/api/nodes/", jsonAPI(s.handleNodeAction))
+	mux.HandleFunc("/api/warp/register", jsonAPI(s.handleWarpRegister))
+	mux.HandleFunc("/api/debug", jsonAPI(s.handleDebug))
+	mux.HandleFunc("/api/addresses", jsonAPI(s.handleAddresses))
+	mux.HandleFunc("/api/export", jsonAPI(s.handleExport))
+	mux.HandleFunc("/api/subscription/status", jsonAPI(s.handleSubscriptionStatus))
+	mux.HandleFunc("/api/subscription/refresh", jsonAPI(s.handleSubscriptionRefresh))
+	mux.HandleFunc("/api/subscription/config", jsonAPI(s.handleSubscriptionConfig))
+	mux.HandleFunc("/api/reload", jsonAPI(s.handleReload))
+	mux.HandleFunc("/api/version", jsonAPI(s.handleVersion))
+	mux.HandleFunc("/api/update/status", jsonAPI(s.handleUpdateStatus))
+	mux.HandleFunc("/api/update/check", jsonAPI(s.handleUpdateCheck))
+	mux.HandleFunc("/api/update/apply", jsonAPI(s.handleUpdateApply))
+	mux.HandleFunc("/api/update/dismiss", jsonAPI(s.handleUpdateDismiss))
+	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic)) // SSE: no gzip
+	mux.HandleFunc("/api/logs", jsonAPI(s.handleLogs))
 	s.srv = &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           mux,
@@ -444,7 +498,12 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	// Calculate region statistics
 	regionStats := make(map[string]int)
 	regionHealthy := make(map[string]int)
-	for _, snap := range allNodes {
+	for i := range allNodes {
+		snap := &allNodes[i]
+		// 列表视图不需要完整 URI 和调用时间线，去掉可将 1000+ 节点的
+		// 响应体积降低一个数量级（详情在 /api/debug 与 /api/nodes/config）。
+		snap.URI = ""
+		snap.Timeline = nil
 		region := snap.Region
 		if region == "" {
 			region = "other"
@@ -462,7 +521,23 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"region_stats":   regionStats,
 		"region_healthy": regionHealthy,
 	}
-	writeJSON(w, payload)
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	// ETag + no-cache 让浏览器在节点状态无变化时收到 304，省去重复传输。
+	sum := sha1.Sum(body)
+	etag := `"` + hex.EncodeToString(sum[:]) + `"`
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("ETag", etag)
+	if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
 }
 
 func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
