@@ -658,9 +658,16 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 		if c.Mode == "multi-port" || c.Mode == "hybrid" {
 			nodeKey := c.Nodes[idx].NodeKey()
 			if existingPort, ok := portMap[nodeKey]; ok && existingPort > 0 {
-				c.Nodes[idx].Port = existingPort
-				usedPorts[existingPort] = true
-				log.Printf("✅ Preserved port %d for node %q", existingPort, c.Nodes[idx].Name)
+				if usedPorts[existingPort] {
+					// Duplicate URIs share the same portMap key; only the first
+					// occurrence may keep the preserved port.
+					log.Printf("⚠️  Preserved port %d for node %q is already used (duplicate URI?), reassigning", existingPort, c.Nodes[idx].Name)
+					c.Nodes[idx].Port = 0
+				} else {
+					c.Nodes[idx].Port = existingPort
+					usedPorts[existingPort] = true
+					log.Printf("✅ Preserved port %d for node %q", existingPort, c.Nodes[idx].Name)
+				}
 			} else if c.Nodes[idx].Port > 0 {
 				if usedPorts[c.Nodes[idx].Port] {
 					log.Printf("⚠️  Port %d for node %q is already used, reassigning", c.Nodes[idx].Port, c.Nodes[idx].Name)

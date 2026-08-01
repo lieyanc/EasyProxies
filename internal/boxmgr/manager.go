@@ -115,6 +115,7 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	// Try to start, with automatic port conflict resolution
 	var instance *box.Box
+	started := false
 	maxRetries := 10
 	for retry := 0; retry < maxRetries; retry++ {
 		var err error
@@ -134,7 +135,11 @@ func (m *Manager) Start(ctx context.Context) error {
 			}
 			return fmt.Errorf("start sing-box: %w", err)
 		}
-		break // Success
+		started = true
+		break
+	}
+	if !started {
+		return fmt.Errorf("start sing-box: exhausted %d retries resolving port conflicts", maxRetries)
 	}
 
 	m.mu.Lock()
@@ -218,6 +223,7 @@ func (m *Manager) reload(newCfg *config.Config, initialProbeReason monitor.Probe
 
 	// Create and start new box instance with automatic port conflict resolution
 	var instance *box.Box
+	started := false
 	maxRetries := 10
 	for retry := 0; retry < maxRetries; retry++ {
 		var err error
@@ -239,7 +245,12 @@ func (m *Manager) reload(newCfg *config.Config, initialProbeReason monitor.Probe
 			m.rollbackToOldConfig(ctx, oldCfg)
 			return fmt.Errorf("start new box: %w", err)
 		}
-		break // Success
+		started = true
+		break
+	}
+	if !started {
+		m.rollbackToOldConfig(ctx, oldCfg)
+		return fmt.Errorf("start new box: exhausted %d retries resolving port conflicts", maxRetries)
 	}
 
 	m.applyConfigSettings(newCfg)
